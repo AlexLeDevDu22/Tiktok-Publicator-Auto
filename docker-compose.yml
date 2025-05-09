@@ -1,0 +1,32 @@
+version: "3"
+services:
+  db:
+    image: mysql:5.7
+    environment:
+      MYSQL_ROOT_PASSWORD: ""
+      MYSQL_DATABASE: repost_data
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ""
+    volumes:
+      - db_data:/var/lib/mysql
+
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DB_HOST: db
+      DB_USER: root
+      DB_PASSWORD: ""
+      DB_NAME: repost_data
+    depends_on:
+      - db
+
+  chrome-bot:
+    build: .
+    volumes:
+      - ./data/chrome-profiles:/app/data/chrome-profiles
+    shm_size: "2gb"
+
+volumes:
+  db_data:

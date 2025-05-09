@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Graphique Magnifique avec Dégradé</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .container {
+            width: 300px;
+            /* Définit la largeur du conteneur */
+            height: 150px;
+            /* Définit la hauteur du conteneur */
+            padding: 10px;
+            display: flex;
+            align-items: center;
+            /* Centre verticalement */
+            justify-content: center;
+            /* Centre horizontalement */
+            text-align: center;
+            /* Centre le texte */
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            overflow: hidden;
+            /* Évite que le texte sorte du conteneur */
+        }
+
+        .container h2 {
+            margin: 0;
+            font-size: clamp(1rem, 5vw, 2rem);
+            /* Ajuste dynamiquement la taille de police */
+            line-height: 1.2;
+            /* Ajuste l'espacement entre les lignes */
+            word-break: break-word;
+            /* Permet de couper les mots si nécessaire */
+            overflow: hidden;
+            /* Évite que le contenu dépasse */
+            text-overflow: ellipsis;
+            /* Ajoute des points de suspension si le texte est trop long */
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h2>Your Dynamic Heading</h2>
+    </div>
+
+    <script>
+    </script>
+</body>
+
+</html>

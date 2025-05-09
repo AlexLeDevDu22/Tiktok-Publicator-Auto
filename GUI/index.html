@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stats Dashboard</title>
+    <link rel="stylesheet" href="styles/styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Caveat:wght@400..700&family=Concert+One&family=Jaro:opsz@6..72&family=Permanent+Marker&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+
+  <body>
+    <header>
+      <select id="container-last-days">
+        <!-- <option value="1" class="last-days">Aujourd'hui</option>  -->
+        <option value="7" class="last-days selected">7 derniers jours</option>
+        <option value="30" class="last-days">30 derniers jours</option>
+        <option value="60" class="last-days">60 derniers jours</option>
+        <option value="365" class="last-days">365 derniers jours</option>
+        <option value="-1" class="last-days">Création du compte</option>
+      </select>
+      <div id="container-profil">
+        <img id="profil-image" src="PP/love.comptabilitys.png" alt="" />
+        <h3 id="profil-name"><i>love.comptabilitys</i></h3>
+      </div>
+      <h1 id="total-rewards"></h1>
+      <div id="container-header-comparison">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 576 512"
+          id="svg-icon-comparison"
+          fill="green"
+        >
+          <path
+            d="M384 160c-17.7 0-32-14.3-32-32s14.3-32 32-32l160 0c17.7 0 32 14.3 32 32l0 160c0 17.7-14.3 32-32 32s-32-14.3-32-32l0-82.7L342.6 374.6c-12.5 12.5-32.8 12.5-45.3 0L192 269.3 54.6 406.6c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3l160-160c12.5-12.5 32.8-12.5 45.3 0L320 306.7 466.7 160 384 160z"
+          />
+        </svg>
+        <h2 id="header-comparison-percentage" style="color: green"></h2>
+      </div>
+    </header>
+    <main id="dashboard">
+      <div id="stats-container">
+        <div class="stat-block-container" name="views">
+          <h2></h2>
+          <h3>Vues</h3>
+        </div>
+        <div class="stat-block-container" name="follows">
+          <h2></h2>
+          <h3>Follows</h3>
+        </div>
+        <div class="stat-block-container" name="likes">
+          <h2></h2>
+          <h3>Likes</h3>
+        </div>
+        <div class="stat-block-container" name="comments">
+          <h2></h2>
+          <h3>Commentaires</h3>
+        </div>
+        <div class="stat-block-container" name="shares">
+          <h2></h2>
+          <h3>Partages</h3>
+        </div>
+        <div class="stat-block-container" name="pv">
+          <h2></h2>
+          <h3>Profil</h3>
+        </div>
+      </div>
+      <div id="container-charts">
+        <div class="chart-container">
+          <h2 class="chart-title">Revenues</h2>
+          <canvas id="chart1" width="100px"></canvas>
+        </div>
+        <div id="charts-separator"></div>
+        <div class="chart-container">
+          <h2 class="chart-title" id="chart2-title">Follows</h2>
+          <canvas id="chart2" width="100px"></canvas>
+        </div>
+      </div>
+    </main>
+    <script src=" scripts/script.js"></script>
+  </body>
+</html>
