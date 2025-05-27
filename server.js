@@ -5,11 +5,10 @@ const hubRepost = require("./reposter/hub-repost.js");
 const tiktokStats = require("./tiktok-stats.js");
 const postingManager = require("./posting-manager.js");
 const { getAccountsData } = require("./utils.js");
-const { get } = require("http");
 const app = express();
 const port = 3000;
 
-app.use(express.static(path.join(__dirname, "GUI")));
+app.use(express.static(path.join(__dirname, "static")));
 app.use(express.json());
 
 //! database connection
@@ -29,7 +28,7 @@ const db = pool.promise();
 // POST endpoint
 app.post("/post-video", async (req, res) => {
   try {
-    const account = "love.comptabilitys";
+    const account = req.body.account;
     const result = await hubRepost.hubRepost(db, account);
     res.status(200).json({ message: result });
   } catch (error) {

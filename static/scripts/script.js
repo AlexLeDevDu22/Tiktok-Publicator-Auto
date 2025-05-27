@@ -127,16 +127,16 @@ async function initDisplayAccount() {
         "/stats?account=" + accounts[currentAccountIndex].id
       );
       accounts[currentAccountIndex].stats = await response.json();
-    }
 
-    // convert rewards to euros
-    response = await fetch("https://api.exchangerate-api.com/v4/latest/USD");
-    const data = await response.json();
-    accounts[currentAccountIndex].stats.rewards = accounts[
-      currentAccountIndex
-    ].stats.rewards.map((reward) =>
-      parseFloat((reward * data.rates.EUR).toFixed(2))
-    );
+      // convert rewards to euros
+      response = await fetch("https://api.exchangerate-api.com/v4/latest/USD");
+      const data = await response.json();
+      accounts[currentAccountIndex].stats.rewards = accounts[
+        currentAccountIndex
+      ].stats.rewards.map((reward) =>
+        parseFloat((reward * data.rates.EUR).toFixed(2))
+      );
+    }
 
     //show total rewards
     totalRewards.textContent = `${

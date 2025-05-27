@@ -1,9 +1,14 @@
 const schedule = require("node-schedule");
 const cron = require("node-cron");
 const utils = require("./utils.js");
-const hubRepost = require("./reposter/hub-repost.js");
+const hubRepost = require("./hub-repost.js");
 const tiktokStats = require("./tiktok-stats.js");
 
+/**
+ * Schedule the posting for today for all accounts.
+ * @param {mysql2/promise} db - The MySQL database connection.
+ * @returns {Promise<void>} - A promise that resolves when all schedules have been set.
+ */
 async function schedulingTodayPosting(db) {
   (await utils.getAccountsData(db, "*")).forEach(async (account) => {
     // each account
@@ -27,18 +32,17 @@ async function schedulingTodayPosting(db) {
         0
       );
       if (execDate > now) {
-        execDate.setDate(execDate.getDate() + 1);
-        schedule.scheduleJob(execDate, () => {
-          console.log(
-            `Posting for ${account.pseudo} (${account.social_media})`
-          );
-          hubRepost.hubRepost(db, account);
-        });
+        hubRepost.hubRepost(db, account, execDate);
       }
     }
   });
 }
 
+/**
+ * Initialize the scheduling of the postings.
+ * This function schedules the postings for today, and then schedule itself to be executed every day at 00:00.
+ * @param {mysql2/promise} db - The MySQL database connection.
+ */
 function init(db) {
   schedulingTodayPosting(db);
   cron.schedule("0 0 * * *", () => {

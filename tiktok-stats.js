@@ -2,7 +2,13 @@ const { JSDOM } = require("jsdom");
 const cron = require("node-cron");
 const utils = require("./utils.js");
 
-const SaveDaysStats = async (db, account) => {
+/**
+ * Sauvegarde les stats par jours pour un compte TikTok
+ *
+ * @param {import("mysql2").PromisePool} db - La connexion à la base de données
+ * @param {{id: number, sessionid: string}} account - Le compte TikTok
+ */
+async function SaveDaysStats(db, account) {
   // Date de départ absolue
   const START_DATE = new Date("2023-01-03");
 
@@ -32,11 +38,6 @@ const SaveDaysStats = async (db, account) => {
     return;
   }
 
-  // Index du startDay par rapport à la date de départ (TikTok semble compter en jours depuis le 3 janvier 2023)
-  const startDayIndex = Math.ceil(
-    (lastSavedDate - START_DATE) / (1000 * 60 * 60 * 24)
-  );
-
   const response = await fetch(
     `https://www.tiktok.com/aweme/v2/data/insight/?type_requests=[
       {"insigh_type":"vv_history","days":${daysToFetch},"end_days":1},
@@ -64,18 +65,6 @@ const SaveDaysStats = async (db, account) => {
     const date = new Date(lastSavedDate);
     date.setDate(date.getDate() + i);
 
-    console.log(
-      datas
-      // date.toISOString().split("T")[0],
-      // account.id,
-      // datas.vv_history[i]?.value || 0,
-      // datas.like_history[i]?.value || 0,
-      // datas.pv_history[i]?.value || 0,
-      // datas.comment_history[i]?.value || 0,
-      // datas.share_history[i]?.value || 0,
-      // datas.net_follower_history[i]?.value || 0,
-      // datas.user_rewards_data.est_rewards_diff_num[i]?.value || 0
-    );
     await db.query(
       "INSERT INTO `stats_per_days` (day, account_id, views, likes, pv, comments, shares, follows, rewards) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
@@ -91,9 +80,15 @@ const SaveDaysStats = async (db, account) => {
       ]
     );
   }
-};
+}
 
-const getAllDaysStats = async (db, accountId) => {
+/**
+ * Get all days stats from database
+ * @param {import("mysql2").Pool} db - database connection
+ * @param {number} accountId - id of the account to get stats
+ * @returns {Promise<Array<import("./db-types").StatsPerDay>>} - array of stats
+ */
+async function getAllDaysStats(db, accountId) {
   //get all days stats from database
   return (
     await db.query(
@@ -101,9 +96,9 @@ const getAllDaysStats = async (db, accountId) => {
       [accountId]
     )
   )[0];
-};
+}
 
-bestHoursToPost = async (account, n) => {
+async function bestHoursToPost(account, n) {
   const response = await fetch(
     'https://www.tiktok.com/aweme/v2/data/insight/?type_requests=[{"insigh_type":"viewer_active_history_hours","days":8,"end_days":1}]',
     {
@@ -142,7 +137,7 @@ bestHoursToPost = async (account, n) => {
     }
   }
   return bestTimes;
-};
+}
 
 async function init(db) {
   (await utils.getAccountsData(db, "*")).forEach((account) => {
