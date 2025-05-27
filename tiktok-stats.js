@@ -1,4 +1,3 @@
-const { JSDOM } = require("jsdom");
 const cron = require("node-cron");
 const utils = require("./utils.js");
 
