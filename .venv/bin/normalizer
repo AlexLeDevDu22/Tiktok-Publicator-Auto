@@ -1,4 +1,6 @@
-#!/home/alex/Projets_Persos/Big_projects/Tiktok-Publicator-AUTO/.venv/bin/python3
+#!/bin/sh
+'''exec' "/home/alex/Projets_Persos/Big_projects/Tiktok-Publisher/V2 (AUTO)/.venv/bin/python3.13" "$0" "$@"
+' '''
 # -*- coding: utf-8 -*-
 import re
 import sys
