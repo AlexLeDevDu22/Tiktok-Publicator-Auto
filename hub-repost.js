@@ -1,5 +1,6 @@
 const https = require("https");
 const { URL } = require("url");
+const cron = require("node-cron");
 
 // Main video posting function
 async function hubRepost(db, account, schedule) {
@@ -33,11 +34,37 @@ async function hubRepost(db, account, schedule) {
   ]);
   // save the posted video in the database
   db.querry(
-    "INSRET INTO `publications` (`tiktok_id`, `at_account`, `description`, date) VALUES ",
-    [videoToPost.id, account.id, videoToPost.description, new Date()]
+    "INSRET INTO `publications` (`tiktok_id`, `at_account`, `description`, date, `status`) VALUES ",
+    [
+      videoToPost.id,
+      account.id,
+      videoToPost.description,
+      schedule || new Date(),
+      schedule && schedule > new Date() ? "scheduled" : "published",
+    ]
   );
+  if (schedule && schedule > new Date()) {
+    // Schedule the status update
 
-  return `Video uploaded successfully: ${videoToPost.id} for account ${account.pseudo}`;
+    const scheduleDate = new Date(schedule);
+    const cronTime = `${scheduleDate.getMinutes()} ${scheduleDate.getHours()} ${scheduleDate.getDate()} ${
+      scheduleDate.getMonth() + 1
+    } *`;
+    cron.schedule(
+      cronTime,
+      () => {
+        db.querry(
+          "UPDATE `publications` SET `status` = 'published' WHERE `tiktok_id` = ? AND `at_account` = ?",
+          [videoToPost.id, account.id]
+        );
+      },
+      { scheduled: true }
+    );
+  }
+
+  console.log(
+    `Video uploaded successfully: ${videoToPost.id} for account ${account.pseudo}`
+  );
 }
 
 /**
