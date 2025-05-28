@@ -1,5 +1,3 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 import sys
 import mysql.connector
 from mysql.connector import Error
@@ -8,19 +6,7 @@ profile = sys.argv[1]
 
 print(f"Profile: {profile}")
 
-# Lancement de Chrome avec ton profil (optionnel mais recommandé si authentifié)
-chrome_options = Options()
-#chrome_options.add_argument("--user-data-dir=/home/alex/.config/google-chrome")
-chrome_options.add_argument(f"--user-data-dir=data/chrome-profiles/{profile}")
-chrome_options.add_argument(f"--profile-directory={profile}")
 
-driver = webdriver.Chrome(options=chrome_options)
-
-# Aller sur TikTok (attends un peu que la page charge)
-driver.get("https://www.tiktok.com/@")
-input("Connect yourself to TikTok and press Enter...")
-
-# Connexion à la base de données
 try:
     connection = mysql.connector.connect(
         host='localhost',
@@ -65,11 +51,6 @@ try:
 
 except Error as e:
     print("Erreur lors de la connexion ou de l'exécution :", e)
-
-finally:
-    if connection.is_connected():
-        cursor.close()
-        connection.close()
 
 
 

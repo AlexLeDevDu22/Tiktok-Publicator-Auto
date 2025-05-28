@@ -1,7 +1,7 @@
 const express = require("express");
 const path = require("path");
 const mysql = require("mysql2");
-const hubRepost = require("./reposter/hub-repost.js");
+const hubRepost = require("./hub-repost.js");
 const tiktokStats = require("./tiktok-stats.js");
 const postingManager = require("./posting-manager.js");
 const { getAccountsData } = require("./utils.js");
@@ -13,8 +13,8 @@ app.use(express.json());
 
 //! database connection
 const pool = mysql.createPool({
-  host: "localhost",
-  user: "root",
+  host: "127.0.0.1",
+  user: "nodejs",
   password: "",
   database: "repost_data",
   port: 3306,
