@@ -7,3 +7,5 @@ create the chrome profile with the account name
 connect you to the account and press enter
 
 add the account profil picture to GUI/PP/<pseudo>.png
+
+ET YA AUSSI LE buffer_id

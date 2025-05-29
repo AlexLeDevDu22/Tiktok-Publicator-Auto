@@ -1,7 +1,6 @@
 const express = require("express");
 const path = require("path");
 const mysql = require("mysql2");
-const hubRepost = require("./hub-repost.js");
 const tiktokStats = require("./tiktok-stats.js");
 const postingManager = require("./posting-manager.js");
 const { getAccountsData } = require("./utils.js");
@@ -13,7 +12,7 @@ app.use(express.json());
 
 //! database connection
 const pool = mysql.createPool({
-  host: "127.0.0.1",
+  host: "raspberrypi.local",
   user: "nodejs",
   password: "",
   database: "repost_data",
@@ -29,7 +28,7 @@ const db = pool.promise();
 app.post("/post-video", async (req, res) => {
   try {
     const account = req.body.account;
-    const result = await hubRepost.hubRepost(db, account);
+    const result = await postingManager.hubRepost(db, account);
     res.status(200).json({ message: result });
   } catch (error) {
     console.error(error.message);
