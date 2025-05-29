@@ -65,12 +65,12 @@ app.get("/accounts", async (req, res) => {
   return res.status(200).json(await getAccountsData(db, "*"));
 });
 
-postingManager.init(db);
-tiktokStats.init(db);
-
 // HTTP Server
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
 });
+
+postingManager.init(db);
+tiktokStats.init(db);
 
 module.exports = { db };

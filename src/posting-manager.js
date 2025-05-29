@@ -12,7 +12,7 @@ const tiktokStats = require("./tiktok-stats.js");
 function getPostedTodayCount(db, accountId) {
   return db
     .execute(
-      "SELECT COUNT(*) as count FROM publications WHERE at_account = ? AND DATE(created_at) = CURDATE()",
+      "SELECT COUNT(*) as count FROM publications WHERE at_account = ? AND DATE(date) = CURDATE()",
       [accountId]
     )
     .then(([rows]) => rows[0].count);
@@ -31,7 +31,7 @@ async function schedulingTodayPosting(db) {
       account.daily_tiktok_count
     );
     for (let i = 0; i < account.daily_tiktok_count; i++) {
-      const postedToday = await utils.getPostedTodayCount(db, account.id);
+      const postedToday = await getPostedTodayCount(db, account.id);
       if (i < postedToday) {
         continue;
       }
@@ -48,6 +48,9 @@ async function schedulingTodayPosting(db) {
         scheduleHours || [17, 13, 20][i % 3],
         0,
         0
+      );
+	console.log(
+        `Scheduling posting for account ${account.id} at ${execDate.toISOString()}`
       );
       if (execDate > now) {
         hubRepost.hubRepost(db, account, execDate);

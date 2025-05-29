@@ -7,34 +7,29 @@ async function hubRepost(db, account, schedule) {
   console.log(`Posting for ${account.pseudo} (${account.social_media})`);
 
   let videoToPost = null;
-  await db
-    .querry(
-      "SELECT * FROM `stored_tiktoks` WHERE `niche_id` = ? AND `id` > ? LIMIT 1",
-      [account.niche_belonged, account.last_tiktok_id]
-    )
-    .then((rows) => {
-      if (rows.length > 0)
+  const [rows] = await db.query(
+    "SELECT * FROM `stored_tiktoks` WHERE `niche_id` = ? AND `id` > ? LIMIT 1",
+    [account.niche_belonged, account.last_tiktok_id]
+  );
+console.log(rows);
+      if (rows.length == 0)
         throw new Error(
-          `${account.pseudo}(${account.social_media}) has reached the maximum number of videos in list: ${currentVideosType}`
+          `${account.pseudo}(${account.social_media}) has reached the maximum number of videos.`
         );
       else videoToPost = rows[0];
-    })
-    .catch((err) => {
-      console.error(err);
-      throw err;
-    });
-
+     
   // Post the video
+console.log(videoToPost);
   uploadVideo(account, videoToPost, schedule);
 
   // update the niche
-  db.querry("UPDATE `accounts` SET `last_tiktok_id` = ? WHERE `id` = ?", [
+  db.query("UPDATE `accounts` SET `last_tiktok_id` = ? WHERE `id` = ?", [
     videoToPost.id,
     account.id,
   ]);
   // save the posted video in the database
-  db.querry(
-    "INSRET INTO `publications` (`tiktok_id`, `at_account`, `description`, date, `status`) VALUES ",
+  db.query(
+    "INSRET INTO `publications` (`tiktok_id`, `at_account`, `description`, date, `status`) VALUES (?,?,?,?)",
     [
       videoToPost.id,
       account.id,
@@ -53,7 +48,7 @@ async function hubRepost(db, account, schedule) {
     cron.schedule(
       cronTime,
       () => {
-        db.querry(
+        db.query(
           "UPDATE `publications` SET `status` = 'published' WHERE `tiktok_id` = ? AND `at_account` = ?",
           [videoToPost.id, account.id]
         );
@@ -123,6 +118,7 @@ function makeRequest(url, options, data = null) {
  */
 async function uploadVideo(account, videoToPost, schedule) {
   // Première requête PATCH
+console.log(videoToPost);
   const patchData = JSON.stringify({
     zdl: {
       app: "EngineAPI",

@@ -111,10 +111,9 @@ async function bestHoursToPost(account, n) {
     }
   );
   const data = await response.json();
-
   const hours = data.viewer_active_history_hours[0].value; // heurs il y a 7 jours
 
-  if (hours.reduce((a, b) => a + b) < 480) return [16, 19];
+  if (hours.reduce((a, b) => a + b) < 480) return [17, 11, 20];
   let bestTimes = [];
 
   // Tri les heures par ordre décroissant
