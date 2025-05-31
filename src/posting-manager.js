@@ -29,8 +29,6 @@ async function schedulingTodayPosting(db) {
 
   // ✅ Utiliser for...of au lieu de forEach pour éviter les race conditions
   for (const account of accounts) {
-    console.log(`Processing account ${account.id} (${account.pseudo})`);
-
     try {
       // Récupérer les meilleures heures une seule fois par compte
       let bestHoursToPost = await tiktokStats.bestHoursToPost(
@@ -80,12 +78,6 @@ async function schedulingTodayPosting(db) {
           execDate.setDate(execDate.getDate() + 1);
         }
 
-        console.log(
-          `Scheduling post ${i + 1}/${account.daily_tiktok_count} for account ${
-            account.id
-          } at ${execDate.toISOString()}`
-        );
-
         // ✅ Passer le last_tiktok_id actuel à hubRepost
         await hubRepost(db, account, execDate, currentLastTiktokId);
       }
@@ -98,9 +90,17 @@ async function schedulingTodayPosting(db) {
 }
 
 // Main video posting function
-async function hubRepost(db, account, schedule, lastTiktokId = null) {
+async function hubRepost(
+  db,
+  account,
+  schedule,
+  lastTiktokId = null,
+  testMode = false
+) {
   console.log(
-    `Processing posting for ${account.pseudo} (${account.social_media})`
+    `Processing posting for ${account.pseudo} (${account.social_media}) at ${
+      schedule ? schedule.toISOString() : "now"
+    }`
   );
 
   // ✅ Utiliser une transaction pour assurer l'atomicité
@@ -118,10 +118,6 @@ async function hubRepost(db, account, schedule, lastTiktokId = null) {
         )
       )[0][0].last_tiktok_id;
 
-    console.log(
-      `Account ${account.id}: Searching for video with niche_id=${account.niche_belonged}, id>${currentLastId}`
-    );
-
     // ✅ Sélectionner la prochaine vidéo avec verrou
     const [rows] = await connection.query(
       "SELECT * FROM `stored_tiktoks` WHERE `niche_id` = ? AND `id` > ? ORDER BY `id` ASC LIMIT 1 FOR UPDATE",
@@ -135,9 +131,6 @@ async function hubRepost(db, account, schedule, lastTiktokId = null) {
     }
 
     const videoToPost = rows[0];
-    console.log(
-      `Selected video ID ${videoToPost.id} for account ${account.id}`
-    );
 
     // ✅ Vérifier qu'on n'a pas déjà publié cette vidéo pour ce compte
     const [existingPub] = await connection.query(
@@ -154,62 +147,62 @@ async function hubRepost(db, account, schedule, lastTiktokId = null) {
       return;
     }
 
-    // ✅ Mettre à jour last_tiktok_id AVANT la publication
-    await connection.query(
-      "UPDATE `accounts` SET `last_tiktok_id` = ? WHERE `id` = ?",
-      [videoToPost.id, account.id]
-    );
+    if (!testMode) {
+      // ✅ Mettre à jour last_tiktok_id AVANT la publication
+      await connection.query(
+        "UPDATE `accounts` SET `last_tiktok_id` = ? WHERE `id` = ?",
+        [videoToPost.id, account.id]
+      );
+    }
 
-    // ✅ Insérer la publication avec un statut approprié
-    const publicationStatus =
-      schedule && schedule > new Date() ? "scheduled" : "published";
-    const publicationDate = schedule || new Date();
+    if (!testMode) {
+      // ✅ Insérer la publication avec un statut approprié
+      const publicationStatus =
+        schedule && schedule > new Date() ? "scheduled" : "published";
+      const publicationDate = schedule || new Date();
 
-    await connection.query(
-      "INSERT INTO `publications` (`tiktok_id`, `at_account`, `description`, `date`, `status`) VALUES (?,?,?,?,?)",
-      [
-        videoToPost.id,
-        account.id,
-        videoToPost.initial_description,
-        publicationDate,
-        publicationStatus,
-      ]
-    );
+      await connection.query(
+        "INSERT INTO `publications` (`tiktok_id`, `at_account`, `description`, `date`, `status`) VALUES (?,?,?,?,?)",
+        [
+          videoToPost.id,
+          account.id,
+          videoToPost.initial_description,
+          publicationDate,
+          publicationStatus,
+        ]
+      );
+    }
 
     // ✅ Commit avant l'upload pour éviter les doublons même si l'upload échoue
     await connection.commit();
     connection.release();
 
-    console.log(
-      `Database updated successfully for video ${videoToPost.id}, account ${account.id}`
-    );
-
     // ✅ Upload de la vidéo (en dehors de la transaction)
     try {
-      await uploadVideo(account, videoToPost, schedule);
+      await uploadVideo(account, videoToPost, schedule, testMode);
       console.log(
-        `Video uploaded successfully: ${videoToPost.id} for account ${account.pseudo}`
+        `Video uploaded/published successfully: ${videoToPost.id} for account ${account.pseudo}`
       );
     } catch (uploadError) {
       console.error(
         `Upload failed for video ${videoToPost.id}, account ${account.id}:`,
         uploadError.message
       );
-      // ✅ Marquer comme échoué au lieu de faire un rollback complet
-      await db.query(
-        "UPDATE `publications` SET `status` = 'failed' WHERE `tiktok_id` = ? AND `at_account` = ?",
-        [videoToPost.id, account.id]
-      );
+      if (!testMode) {
+        // ✅ Marquer comme échoué au lieu de faire un rollback complet
+        await db.query(
+          "UPDATE `publications` SET `status` = 'failed' WHERE `tiktok_id` = ? AND `at_account` = ?",
+          [videoToPost.id, account.id]
+        );
+      }
     }
 
     // ✅ Programmer la mise à jour du statut si c'est schedulé
-    if (schedule && schedule > new Date()) {
+    if (!testMode && schedule && schedule > new Date()) {
       const scheduleDate = new Date(schedule);
       const cronTime = `${scheduleDate.getMinutes()} ${scheduleDate.getHours()} ${scheduleDate.getDate()} ${
         scheduleDate.getMonth() + 1
       } *`;
-
-      console.log(`Scheduling status update with cron: ${cronTime}`);
 
       cron.schedule(
         cronTime,
@@ -218,9 +211,6 @@ async function hubRepost(db, account, schedule, lastTiktokId = null) {
             await db.query(
               "UPDATE `publications` SET `status` = 'published' WHERE `tiktok_id` = ? AND `at_account` = ?",
               [videoToPost.id, account.id]
-            );
-            console.log(
-              `Status updated to 'published' for video ${videoToPost.id}, account ${account.id}`
             );
           } catch (cronError) {
             console.error(
@@ -293,12 +283,13 @@ function makeRequest(url, options, data = null) {
 }
 
 /**
- * Upload a video to a TikTok account using the Zapier API.
- * @param {Object} account - The account to upload the video to.
- * @param {Object} videoToPost - The video to upload.
- * @param {string} schedule - The date to schedule the video for.
+ * Uploads a video to Buffer using the specified account, video, and schedule.
+ * @param {Account} account - The account to use for the upload.
+ * @param {Video} videoToPost - The video to upload.
+ * @param {Date} schedule - The date and time to schedule the upload for, or null to upload now.
+ * @param {boolean} [testMode=false] - If true, the upload will not be performed, only the request will be made.
  */
-async function uploadVideo(account, videoToPost, schedule) {
+async function uploadVideo(account, videoToPost, schedule, testMode = false) {
   // Première requête PATCH
   const patchData = JSON.stringify({
     zdl: {
@@ -337,16 +328,7 @@ async function uploadVideo(account, videoToPost, schedule) {
               "https://www.tikwm.com/video/media/play/" +
               videoToPost.link.split("/").reverse()[0] +
               ".mp4",
-            scheduled_at: schedule
-              ?.toLocaleString("en-FR", {
-                day: "2-digit",
-                month: "2-digit",
-                year: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-                hour12: false,
-              })
-              .replace(",", ""),
+            scheduled_at: schedule?.toISOString().slice(0, 16),
             attachment: "video",
           },
           meta: {
@@ -417,17 +399,15 @@ async function uploadVideo(account, videoToPost, schedule) {
           "visitor_id=7d9a6b21-dda1-4c26-a5ee-79e9d457338d; _dd_s=rum=0&expire=1748190015806&logs=1&id=6b9b6c62-d538-41e5-a531-10682b44fec9&created=1748188434256; session_id=aca3ec42-2699-4c19-a81b-2264a06d2b49; zapidentity=-756356569; ssohint=7b37135c-c13b-46e9-b667-cff353566dd7; zapha=true; csrftoken=i70DalPUgdEgkVf541s7f5uwa9JNaQ6lOtEthX7fn3uaDRc7E1jB19bcyFCKVjRE; currentAccountId=18124313; billing_downgrade_flow_reorder=1; ssoid=eyJzayI6ImdBQUFBQUJvTXpfSEhqZFJUYmhxbElpWlJDdHZOenJfanN4c05QZjlnMjd3dng2b1RqSEl6NVp4QXpIUmhzaEwxZHVlRnVnR3U5TEVFOGQtcENjODRaRlZIVG12aG0xN05GRmNzbFk5NzFhTlp2SjVMNWtteDNSUVk3RzgxUlZGNkRHTlJUcDFRT29iIiwiY2lkIjoxODEyNDI2OX0:1uJDqp:srpKu6qRspwN8itTiCCgpYAd6mo4z6sz1uL2EGb9ju0; signonidentity=REVQUkVDQVRFRA; zapsession=i0vi72bz5z64aawf9we95ewsluncjs1a; AMP_66c1d651b8=JTdCJTIyZGV2aWNlSWQlMjIlM0ElMjIyN2RkOTdmMS03MzA5LTQ2YjMtYTI3MS00YjZlMzUzMzE4OGElMjIlMkMlMjJ1c2VySWQlMjIlM0ElMjIxODEyNDI2OSUyMiUyQyUyMnNlc3Npb25JZCUyMiUzQTE3NDgxODg0MzQzMTglMkMlMjJvcHRPdXQlMjIlM0FmYWxzZSUyQyUyMmxhc3RFdmVudFRpbWUlMjIlM0ExNzQ4MTg4OTA1MjM3JTJDJTIybGFzdEV2ZW50SWQlMjIlM0E1OCUyQyUyMnBhZ2VDb3VudGVyJTIyJTNBMCU3RA==; AMP_MKTG_66c1d651b8=JTdCJTIycmVmZXJyZXIlMjIlM0ElMjJodHRwcyUzQSUyRiUyRmFjY291bnRzLmdvb2dsZS5jb20lMkYlMjIlMkMlMjJyZWZlcnJpbmdfZG9tYWluJTIyJTNBJTIyYWNjb3VudHMuZ29vZ2xlLmNvbSUyMiU3RA==; intercom-id-su0xp8g6=f0158741-0bc2-41f2-882d-a7aba47b21e8; intercom-session-su0xp8g6=cHljNmplcVY2M3MzblpoUjh5SS9teng5N2ZwUEFXTDZvbllxcjVGM28zTVlQSG9RWWdyb1VBK086OHZrQ2V2YXlWWWtDZXNlZHZQWDA0SXh6Vm81amZuWEFxM3lZUGVQWXliRzlQaFd1ajA9LS1MT3BkT3hEcTBwTnllQzJDM1JpcmdnPT0=--5916c72357222531523d657ba6a22bf044147bee; intercom-device-id-su0xp8g6=c18c9ded-10df-4925-956c-c0859c4c7253; OptanonConsent=isGpcEnabled=0&datestamp=Sun+May+25+2025+18%3A02%3A52+GMT%2B0200+(Central+European+Summer+Time)&version=202401.1.0&browserGpcFlag=0&isIABGlobal=false&hosts=&landingPath=NotLandingPage&groups=C0004%3A1%2CC0005%3A1%2CC0002%3A1%2CC0003%3A1%2CC0001%3A1&AwaitingReconsent=false; OptanonConsentInSided=C0005; _gcl_au=1.1.141136851.1748188445; fs_lua=1.1748188952477; fs_uid=#1XM#df50416c-68b8-44d3-a18c-9a3bb2cd198d:0e1af4ce-03bb-4394-968d-4d771003ae64:1748188446157::2#/1779724449; _tt_enable_cookie=1; _ttp=01JW42DG1W4MWMC0M9FEHNWB77_.tt.1; ttcsid_CCLOU5BC77U1QCQHCUEG=1748188446783::FCJZLEnQzJOLS7xhY-5j.1.1748188967054; ttcsid=1748188446783::IxALEbXQLelp78y2obkW.1.1748188966744; lastVisitedPage=plans; _gcl_aw=GCL.1748188973.Cj0KCQjw_8rBBhCFARIsAJrc9yAfGCDpq0Z-VHrUnvv_qruBeiKjYyj9G7X0RW9shpMNlHhFgvBvDT0aAkBDEALw_wcB; _gcl_gs=2.1.k1$i1748188963$u206606488; _uetsid=7cd6d1d0398011f09644d39bffa45338; _uetvid=7cd6c000398011f091ce37c3d3808f85",
       },
     };
-
-    // const postResponse = await makeRequest(
-    //   "https://zapier.com/api/gulliver/steptesting/v2/zaps/299667490/steps/_GEN_1748188434247/output/test/run?account_id=18124313",
-    //   postOptions,
-    //   "{}"
-    // );
-    // if (![200, 201].includes(postResponse.statusCode))
-    //   console.log(postResponse.data);
-    // console.log(
-    //   `Deuxième requête terminée avec le statut: ${postResponse.statusCode}`
-    // );
+    if (!testMode) {
+      const postResponse = await makeRequest(
+        "https://zapier.com/api/gulliver/steptesting/v2/zaps/299667490/steps/_GEN_1748188434247/output/test/run?account_id=18124313",
+        postOptions,
+        "{}"
+      );
+      if (![200, 201].includes(postResponse.statusCode))
+        console.error("error posting", postResponse.data);
+    }
   } catch (error) {
     console.error("Erreur lors de l'exécution:", error.message);
     process.exit(1);
