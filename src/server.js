@@ -28,7 +28,11 @@ const db = pool.promise();
 app.post("/post-video", async (req, res) => {
   try {
     const account = req.body.account;
-    const result = await postingManager.hubRepost(db, account);
+    const result = await postingManager.hubRepost(
+      db,
+      account,
+      req.body.schedule ? new Date(req.body.schedule) : null
+    );
     res.status(200).json({ message: result });
   } catch (error) {
     console.error(error.message);

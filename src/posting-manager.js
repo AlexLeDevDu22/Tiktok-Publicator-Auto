@@ -25,99 +25,223 @@ function getPostedTodayCount(db, accountId) {
  * @returns {Promise<void>} - A promise that resolves when all schedules have been set.
  */
 async function schedulingTodayPosting(db) {
-  (await utils.getAccountsData(db, "*")).forEach(async (account) => {
-    // each accounts
-    let bestHoursToPost = await tiktokStats.bestHoursToPost(
-      account,
-      account.daily_tiktok_count
-    );
-    for (let i = 0; i < account.daily_tiktok_count; i++) {
-      const postedToday = await getPostedTodayCount(db, account.id);
-      if (i < postedToday) {
-        continue;
-      }
-      // each posting per account
-      let scheduleHours = null;
-      if (account.social_media === "tiktok") {
-        scheduleHours = bestHoursToPost[i];
-      }
-      const now = new Date();
-      const execDate = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate(),
-        scheduleHours || [17, 13, 20][i % 3],
-        0,
-        0
-      );
-      console.log(
-        `Scheduling posting for account ${
-          account.id
-        } at ${execDate.toISOString()}`
+  const accounts = await utils.getAccountsData(db, "*");
+
+  // ✅ Utiliser for...of au lieu de forEach pour éviter les race conditions
+  for (const account of accounts) {
+    console.log(`Processing account ${account.id} (${account.pseudo})`);
+
+    try {
+      // Récupérer les meilleures heures une seule fois par compte
+      let bestHoursToPost = await tiktokStats.bestHoursToPost(
+        account,
+        account.daily_tiktok_count
       );
 
-      await hubRepost(db, account, execDate > now ? execDate : null);
-      account.last_tiktok_id += 1;
+      for (let i = 0; i < account.daily_tiktok_count; i++) {
+        const postedToday = await getPostedTodayCount(db, account.id);
+
+        if (i < postedToday) {
+          console.log(
+            `Skipping post ${i + 1} for account ${
+              account.id
+            } - already posted today (${postedToday}/${
+              account.daily_tiktok_count
+            })`
+          );
+          continue;
+        }
+
+        // ✅ Récupérer last_tiktok_id depuis la DB pour éviter les conflits
+        const [accountRows] = await db.query(
+          "SELECT last_tiktok_id FROM accounts WHERE id = ?",
+          [account.id]
+        );
+        const currentLastTiktokId = accountRows[0].last_tiktok_id;
+
+        // Calculer l'horaire de publication
+        let scheduleHours = null;
+        if (account.social_media === "tiktok") {
+          scheduleHours = bestHoursToPost[i];
+        }
+
+        const now = new Date();
+        const execDate = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          now.getDate(),
+          scheduleHours || [9, 14, 19][i % 3], // ✅ Horaires plus logiques
+          Math.floor(Math.random() * 60), // ✅ Ajouter quelques minutes aléatoires
+          0
+        );
+
+        // ✅ Si l'heure est déjà passée, programmer pour le lendemain
+        if (execDate <= now) {
+          execDate.setDate(execDate.getDate() + 1);
+        }
+
+        console.log(
+          `Scheduling post ${i + 1}/${account.daily_tiktok_count} for account ${
+            account.id
+          } at ${execDate.toISOString()}`
+        );
+
+        // ✅ Passer le last_tiktok_id actuel à hubRepost
+        await hubRepost(db, account, execDate, currentLastTiktokId);
+      }
+    } catch (error) {
+      console.error(`Error processing account ${account.id}:`, error.message);
+      // ✅ Continuer avec les autres comptes même si un échoue
+      continue;
     }
-  });
+  }
 }
 
 // Main video posting function
-async function hubRepost(db, account, schedule) {
-  console.log(`Posting for ${account.pseudo} (${account.social_media})`);
-
-  let videoToPost = null;
-  const [rows] = await db.query(
-    "SELECT * FROM `stored_tiktoks` WHERE `niche_id` = ? AND `id` > ? LIMIT 1",
-    [account.niche_belonged, account.last_tiktok_id]
-  );
-  if (rows.length == 0)
-    throw new Error(
-      `${account.pseudo}(${account.social_media}) has reached the maximum number of videos.`
-    );
-  else videoToPost = rows[0];
-
-  // Post the video
-  await uploadVideo(account, videoToPost, schedule);
-
-  // update the niche
-  db.query("UPDATE `accounts` SET `last_tiktok_id` = ? WHERE `id` = ?", [
-    videoToPost.id,
-    account.id,
-  ]);
-  // save the posted video in the database
-  db.query(
-    "INSERT INTO `publications` (`tiktok_id`, `at_account`, `description`, date, `status`) VALUES (?,?,?,?,?);",
-    [
-      videoToPost.id,
-      account.id,
-      videoToPost.initial_description,
-      schedule || new Date(),
-      schedule && schedule > new Date() ? "scheduled" : "published",
-    ]
-  );
-  if (schedule && schedule > new Date()) {
-    // Schedule the status update
-
-    const scheduleDate = new Date(schedule);
-    const cronTime = `${scheduleDate.getMinutes()} ${scheduleDate.getHours()} ${scheduleDate.getDate()} ${
-      scheduleDate.getMonth() + 1
-    } *`;
-    cron.schedule(
-      cronTime,
-      () => {
-        db.query(
-          "UPDATE `publications` SET `status` = 'published' WHERE `tiktok_id` = ? AND `at_account` = ?",
-          [videoToPost.id, account.id]
-        );
-      },
-      { scheduled: true }
-    );
-  }
-
+async function hubRepost(db, account, schedule, lastTiktokId = null) {
   console.log(
-    `Video uploaded successfully: ${videoToPost.id} for account ${account.pseudo}`
+    `Processing posting for ${account.pseudo} (${account.social_media})`
   );
+
+  // ✅ Utiliser une transaction pour assurer l'atomicité
+  const connection = await db.getConnection();
+  await connection.beginTransaction();
+
+  try {
+    // ✅ Si lastTiktokId n'est pas fourni, le récupérer avec un verrou
+    const currentLastId =
+      lastTiktokId ||
+      (
+        await connection.query(
+          "SELECT last_tiktok_id FROM accounts WHERE id = ? FOR UPDATE",
+          [account.id]
+        )
+      )[0][0].last_tiktok_id;
+
+    console.log(
+      `Account ${account.id}: Searching for video with niche_id=${account.niche_belonged}, id>${currentLastId}`
+    );
+
+    // ✅ Sélectionner la prochaine vidéo avec verrou
+    const [rows] = await connection.query(
+      "SELECT * FROM `stored_tiktoks` WHERE `niche_id` = ? AND `id` > ? ORDER BY `id` ASC LIMIT 1 FOR UPDATE",
+      [account.niche_belonged, currentLastId]
+    );
+
+    if (rows.length === 0) {
+      throw new Error(
+        `${account.pseudo}(${account.social_media}) has reached the maximum number of videos. Last ID: ${currentLastId}`
+      );
+    }
+
+    const videoToPost = rows[0];
+    console.log(
+      `Selected video ID ${videoToPost.id} for account ${account.id}`
+    );
+
+    // ✅ Vérifier qu'on n'a pas déjà publié cette vidéo pour ce compte
+    const [existingPub] = await connection.query(
+      "SELECT id FROM publications WHERE tiktok_id = ? AND at_account = ?",
+      [videoToPost.id, account.id]
+    );
+
+    if (existingPub.length > 0) {
+      console.warn(
+        `Video ${videoToPost.id} already published for account ${account.id}, skipping`
+      );
+      await connection.rollback();
+      connection.release();
+      return;
+    }
+
+    // ✅ Mettre à jour last_tiktok_id AVANT la publication
+    await connection.query(
+      "UPDATE `accounts` SET `last_tiktok_id` = ? WHERE `id` = ?",
+      [videoToPost.id, account.id]
+    );
+
+    // ✅ Insérer la publication avec un statut approprié
+    const publicationStatus =
+      schedule && schedule > new Date() ? "scheduled" : "published";
+    const publicationDate = schedule || new Date();
+
+    await connection.query(
+      "INSERT INTO `publications` (`tiktok_id`, `at_account`, `description`, `date`, `status`) VALUES (?,?,?,?,?)",
+      [
+        videoToPost.id,
+        account.id,
+        videoToPost.initial_description,
+        publicationDate,
+        publicationStatus,
+      ]
+    );
+
+    // ✅ Commit avant l'upload pour éviter les doublons même si l'upload échoue
+    await connection.commit();
+    connection.release();
+
+    console.log(
+      `Database updated successfully for video ${videoToPost.id}, account ${account.id}`
+    );
+
+    // ✅ Upload de la vidéo (en dehors de la transaction)
+    try {
+      await uploadVideo(account, videoToPost, schedule);
+      console.log(
+        `Video uploaded successfully: ${videoToPost.id} for account ${account.pseudo}`
+      );
+    } catch (uploadError) {
+      console.error(
+        `Upload failed for video ${videoToPost.id}, account ${account.id}:`,
+        uploadError.message
+      );
+      // ✅ Marquer comme échoué au lieu de faire un rollback complet
+      await db.query(
+        "UPDATE `publications` SET `status` = 'failed' WHERE `tiktok_id` = ? AND `at_account` = ?",
+        [videoToPost.id, account.id]
+      );
+    }
+
+    // ✅ Programmer la mise à jour du statut si c'est schedulé
+    if (schedule && schedule > new Date()) {
+      const scheduleDate = new Date(schedule);
+      const cronTime = `${scheduleDate.getMinutes()} ${scheduleDate.getHours()} ${scheduleDate.getDate()} ${
+        scheduleDate.getMonth() + 1
+      } *`;
+
+      console.log(`Scheduling status update with cron: ${cronTime}`);
+
+      cron.schedule(
+        cronTime,
+        async () => {
+          try {
+            await db.query(
+              "UPDATE `publications` SET `status` = 'published' WHERE `tiktok_id` = ? AND `at_account` = ?",
+              [videoToPost.id, account.id]
+            );
+            console.log(
+              `Status updated to 'published' for video ${videoToPost.id}, account ${account.id}`
+            );
+          } catch (cronError) {
+            console.error(
+              `Failed to update status for video ${videoToPost.id}:`,
+              cronError.message
+            );
+          }
+        },
+        { scheduled: true }
+      );
+    }
+  } catch (error) {
+    // ✅ Rollback en cas d'erreur
+    await connection.rollback();
+    connection.release();
+    console.error(
+      `Error in hubRepost for account ${account.id}:`,
+      error.message
+    );
+    throw error;
+  }
 }
 
 /**
