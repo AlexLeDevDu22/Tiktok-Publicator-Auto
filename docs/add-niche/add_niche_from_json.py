@@ -1,6 +1,7 @@
 import argparse
 import json
-import mysql.connector
+import pymysql
+import pyperclip
 
 parser = argparse.ArgumentParser()
 
@@ -12,74 +13,72 @@ parser.add_argument(
 )
     
 parser.add_argument(
-    '--name',
-    dest='name',
+    '--niche-id',
+    dest='niche_id',
     action='store',
-    default="tiktok",
-    help='Nom de la niche'
+    help='Fichier JSON contenant les données'
 )
-parser.add_argument(
-    '--description',
-    dest='description',
-    action='store',
-    default="tiktok",
-    help='Description de la niche'
-)
-
-parser.add_argument(
-    '--example-link',
-    dest='example_link',
-    action='store',
-    default="https://www.tiktok.com/@example",
-    help='Exemple de lien TikTok'
-)
+    
 args = parser.parse_args()
 
 with open(args.json_file, 'r', encoding='utf-8') as file:
     datas = json.load(file)
 
-
-connection = mysql.connector.connect(
-    host='localhost',
+conn = pymysql.connect(
+    host='raspberrypi.local',
     user='root',
     password='',
     database='repost_data',
-    port=3306
+    charset='utf8mb4'  # Assurez-vous que utf8mb4 est bien défini ici
 )
 
-if connection.is_connected():
-    cursor = connection.cursor()
+cursor = conn.cursor()
 
-    #! create niche
-    sql = "INSERT INTO niches (name, description, example_link) VALUES (%s, %s, %s)"
-    values = (args.name, args.description, args.example_link)
-    cursor.execute(sql, values)
-    connection.commit()
+videos = []
+for data in datas:
+    print(data)
+    videos.append({
+        "niche_id": args.niche_id,
+        "link": data[0],
+        "initial_description": data[1],})
 
-    videos = []
-    for data in datas:
-        videos.append({
-            "niche_id": cursor.lastrowid,
-            "link": data[0],
-            "initial_description": data[1],})
+#! save videos in db
+# Générer les noms de colonnes et placeholders
+print(videos)
+columns = videos[0].keys()
+columns_str = ", ".join(columns)
+placeholders = ", ".join(["%s"] * len(columns))
+sql = f"INSERT INTO stored_tiktoks ({columns_str}) VALUES ({placeholders})"
 
-    #! save videos in db
-    # Générer les noms de colonnes et placeholders
-    columns = videos[0].keys()
-    columns_str = ", ".join(columns)
-    placeholders = ", ".join(["%s"] * len(columns))
-    sql = f"INSERT INTO stored_tiktoks ({columns_str}) VALUES ({placeholders})"
+# Extraire les valeurs des dictionnaires dans le bon ordre
+values = [tuple(row[col] for col in columns) for row in videos]
 
-    # Extraire les valeurs des dictionnaires dans le bon ordre
-    values = [tuple(row[col] for col in columns) for row in videos]
+# Créer la requête SQL complète avec les valeurs
+# Créer la requête SQL complète avec les valeurs
+# Créer la requête SQL complète avec les valeurs
+# Créer la requête SQL complète avec les valeurs
+full_query = ""
+for i, value in enumerate(values):
+    full_query += f"INSERT INTO stored_tiktoks ({columns_str}) VALUES ("
+    for j, val in enumerate(value):
+        if isinstance(val, str):
+            full_query += f"'{conn.escape_string(val)}'"
+        else:
+            full_query += f"{val}"
+        if j < len(value) - 1:
+            full_query += ", "
+    full_query += ");\n"
 
-    # Insérer toutes les lignes
+# Copier la requête SQL complète dans le presse-papier
+pyperclip.copy(full_query)
+
+print("Requête SQL complète copiée dans le presse-papier :")
+print(pyperclip.paste())
+
+try:
     cursor.executemany(sql, values)
+except pymysql.Error as e:
+    print(f"Erreur SQL : {e}")
 
-    # Valider et fermer
-    connection.commit()
-    cursor.close()
-    connection.close()
-else:
-    raise Exception("Erreur lors de la connexion à la base de données")
-    
+# Valider et fermer
+cursor.close()

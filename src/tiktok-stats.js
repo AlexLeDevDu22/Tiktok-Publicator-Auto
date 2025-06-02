@@ -59,25 +59,28 @@ async function SaveDaysStats(db, account) {
   );
 
   const datas = await response.json();
+  try {
+    for (let i = 0; i < daysToFetch; i++) {
+      const date = new Date(lastSavedDate);
+      date.setDate(date.getDate() + i);
 
-  for (let i = 0; i < daysToFetch; i++) {
-    const date = new Date(lastSavedDate);
-    date.setDate(date.getDate() + i);
-
-    await db.query(
-      "INSERT INTO `stats_per_days` (day, account_id, views, likes, pv, comments, shares, follows, rewards) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [
-        date.toISOString().split("T")[0],
-        account.id,
-        datas.vv_history[i]?.value || 0,
-        datas.like_history[i]?.value || 0,
-        datas.pv_history[i]?.value || 0,
-        datas.comment_history[i]?.value || 0,
-        datas.share_history[i]?.value || 0,
-        datas.net_follower_history[i]?.value || 0,
-        datas.user_rewards_data.est_rewards_diff_num[i]?.value || 0,
-      ]
-    );
+      await db.query(
+        "INSERT INTO `stats_per_days` (day, account_id, views, likes, pv, comments, shares, follows, rewards) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+          date.toISOString().split("T")[0],
+          account.id,
+          datas.vv_history[i]?.value || 0,
+          datas.like_history[i]?.value || 0,
+          datas.pv_history[i]?.value || 0,
+          datas.comment_history[i]?.value || 0,
+          datas.share_history[i]?.value || 0,
+          datas.net_follower_history[i]?.value || 0,
+          datas.user_rewards_data.est_rewards_diff_num[i]?.value || 0,
+        ]
+      );
+    }
+  } catch (error) {
+    //session ids not set for everyone
   }
 }
 
@@ -111,9 +114,10 @@ async function bestHoursToPost(account, n) {
     }
   );
   const data = await response.json();
+  if (!data.viewer_active_history_hours) return [17, 12, 20]; // if no data, return default hours
   const hours = data.viewer_active_history_hours[0].value; // heurs il y a 7 jours
+  if (hours.reduce((a, b) => a + b) < 480) return [17, 12, 20]; // if no enought views for stats
 
-  if (hours.reduce((a, b) => a + b) < 480) return [17, 11, 20];
   let bestTimes = [];
 
   // Tri les heures par ordre décroissant

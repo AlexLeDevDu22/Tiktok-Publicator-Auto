@@ -70,7 +70,10 @@ app.get("/accounts", async (req, res) => {
 
 // HTTP Server
 app.listen(port, () => {
-  console.log(`Server running on http://localhost:${port}`);
+  console.log(
+    "\x1b[35m%s\x1b[0m",
+    `Server running on http://localhost:${port}`
+  );
 });
 
 postingManager.init(db);

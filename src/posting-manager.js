@@ -13,7 +13,7 @@ const { URL } = require("url");
 function getPostedTodayCount(db, accountId) {
   return db
     .execute(
-      "SELECT COUNT(*) as count FROM publications WHERE at_account = ? AND DATE(date) = CURDATE()",
+      "SELECT COUNT(*) as count FROM publications WHERE at_account = ? AND DATE(date) = CURDATE() AND status != 'failed'",
       [accountId]
     )
     .then(([rows]) => rows[0].count);
@@ -29,6 +29,7 @@ async function schedulingTodayPosting(db) {
 
   // ✅ Utiliser for...of au lieu de forEach pour éviter les race conditions
   for (const account of accounts) {
+    if (!account.active) continue;
     try {
       // Récupérer les meilleures heures une seule fois par compte
       let bestHoursToPost = await tiktokStats.bestHoursToPost(
@@ -37,13 +38,25 @@ async function schedulingTodayPosting(db) {
       );
 
       for (let i = 0; i < account.daily_tiktok_count; i++) {
+        const accountColor = [
+          `\x1b[40m`,
+          `\x1b[41m`,
+          `\x1b[42m`,
+          `\x1b[43m`,
+          `\x1b[44m`,
+          `\x1b[45m`,
+          `\x1b[46m`,
+          `\x1b[47m`,
+        ][account.id % 8]; // ✅ Couleurs de fond pour chaque compte
+
         const postedToday = await getPostedTodayCount(db, account.id);
 
         if (i < postedToday) {
           console.log(
+            "\x1b[33m%s\x1b[0m",
             `Skipping post ${i + 1} for account ${
-              account.id
-            } - already posted today (${postedToday}/${
+              (accountColor, account.pseudo, "\x1b[33m%s\x1b[0m")
+            } - already posted for ${new Date().toLocaleString()} (${postedToday}/${
               account.daily_tiktok_count
             })`
           );
@@ -77,12 +90,25 @@ async function schedulingTodayPosting(db) {
         if (execDate <= now) {
           execDate.setDate(execDate.getDate() + 1);
         }
+        console.log(
+          "\x1b[34m%s\x1b[0m",
+          `Processing posting for ${
+            accountColor + account.pseudo + " \x1b[34m\x1b[0m"
+          } at ${execDate ? execDate.toISOString() : "now"} (${i + 1}/${
+            account.daily_tiktok_count
+          })`
+        );
 
         // ✅ Passer le last_tiktok_id actuel à hubRepost
         await hubRepost(db, account, execDate, currentLastTiktokId);
       }
     } catch (error) {
-      console.error(`Error processing account ${account.id}:`, error.message);
+      console.error(
+        `Error processing account ${
+          accountColor + account.pseudo + "\x1b[0m"
+        }: `,
+        error.message
+      );
       // ✅ Continuer avec les autres comptes même si un échoue
       continue;
     }
@@ -95,14 +121,9 @@ async function hubRepost(
   account,
   schedule,
   lastTiktokId = null,
-  testMode = false
+  testMode = false,
+  accountColor = "\x1b[47m"
 ) {
-  console.log(
-    `Processing posting for ${account.pseudo} (${account.social_media}) at ${
-      schedule ? schedule.toISOString() : "now"
-    }`
-  );
-
   // ✅ Utiliser une transaction pour assurer l'atomicité
   const connection = await db.getConnection();
   await connection.beginTransaction();
@@ -140,11 +161,28 @@ async function hubRepost(
 
     if (existingPub.length > 0) {
       console.warn(
-        `Video ${videoToPost.id} already published for account ${account.id}, skipping`
+        `Video ${videoToPost.id} already published for account ${
+          accountColor + account.pseudo + "\x1b[0m"
+        }, skipping`
       );
       await connection.rollback();
       connection.release();
       return;
+    }
+
+    const isMp4 = await isVideo(videoToPost.link);
+    if (!isMp4) {
+      console.warn(
+        "\x1b[36m%s\x1b[0m",
+        `Tiktok ${videoToPost.id} is not a video, next video...`
+      );
+      await connection.query(
+        "UPDATE `accounts` SET `last_tiktok_id` = ? WHERE `id` = ?",
+        [videoToPost.id + 1, account.id]
+      );
+      await connection.commit();
+      connection.release();
+      return hubRepost(db, account, schedule, videoToPost.id + 1, testMode);
     }
 
     if (!testMode) {
@@ -177,11 +215,26 @@ async function hubRepost(
     await connection.commit();
     connection.release();
 
+    // Récupérer les données de l'account Zapier
+    const [zapierAccount] = await connection.query(
+      "SELECT * FROM `zapier_accounts` WHERE `id` = ? LIMIT 1",
+      [account.zapier_belonged_id]
+    );
+
     // ✅ Upload de la vidéo (en dehors de la transaction)
     try {
-      await uploadVideo(account, videoToPost, schedule, testMode);
+      await uploadVideo(
+        zapierAccount[0],
+        account,
+        videoToPost,
+        schedule,
+        testMode
+      );
       console.log(
-        `Video uploaded/published successfully: ${videoToPost.id} for account ${account.pseudo}`
+        "\x1b[32m%s\x1b[0m",
+        `Video uploaded/published successfully: ${videoToPost.id} for account ${
+          accountColor + account.pseudo
+        }`
       );
     } catch (uploadError) {
       console.error(
@@ -232,6 +285,34 @@ async function hubRepost(
     );
     throw error;
   }
+}
+
+/**
+ * Checks if a given URL is a video.
+ *
+ * @param {string} url - The URL to check.
+ * @returns {Promise<boolean>} - A promise that resolves with a boolean indicating if the URL is a video or not.
+ */
+function isVideo(url) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      method: "HEAD",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36",
+      },
+    };
+
+    const req = https.request(url, options, (res) => {
+      resolve(res.statusCode != 404);
+    });
+
+    req.on("error", (err) => {
+      reject(err);
+    });
+
+    req.end();
+  });
 }
 
 /**
@@ -289,18 +370,24 @@ function makeRequest(url, options, data = null) {
  * @param {Date} schedule - The date and time to schedule the upload for, or null to upload now.
  * @param {boolean} [testMode=false] - If true, the upload will not be performed, only the request will be made.
  */
-async function uploadVideo(account, videoToPost, schedule, testMode = false) {
+async function uploadVideo(
+  zapierAccount,
+  account,
+  videoToPost,
+  schedule,
+  testMode = false
+) {
   // Première requête PATCH
   const patchData = JSON.stringify({
     zdl: {
       app: "EngineAPI",
       type: "run",
       action: "series_skip_errors",
-      id: "series_299667490",
+      id: "series_" + zapierAccount.zap_id,
       zdl_version: "0.4",
       steps: [
         {
-          id: "299667490",
+          id: zapierAccount.zap_id,
           app: "CodeCLIAPI@1.0.1",
           type: "read",
           action: "",
@@ -315,12 +402,12 @@ async function uploadVideo(account, videoToPost, schedule, testMode = false) {
           type: "write",
           app: "BufferCLIAPI@2.2.0",
           action: "update",
-          id: "_GEN_1748188434247",
-          authentication_id: 50674384,
+          id: zapierAccount.GEN_ID,
+          authentication_id: zapierAccount.authentication_id,
           params: {
             method:
               schedule && schedule > new Date() ? "schedule" : "share_now",
-            organizationId: "6596f43117e44cb6b911ba65",
+            organizationId: zapierAccount.buffer_organization_id,
             channelId: account.id_buffer,
             scheduling_type: "direct",
             text: videoToPost.description,
@@ -361,21 +448,28 @@ async function uploadVideo(account, videoToPost, schedule, testMode = false) {
       "Accept-Language": "en-US,en;q=0.5",
       "Accept-Encoding": "gzip, deflate, br, zstd",
       "Content-Type": "application/json",
-      "X-CSRFToken":
-        "i70DalPUgdEgkVf541s7f5uwa9JNaQ6lOtEthX7fn3uaDRc7E1jB19bcyFCKVjRE",
+      "X-CSRFToken": zapierAccount.cookies.split("csrftoken=")[1].split(";")[0],
+      "User-Agent":
+        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:138.0) Gecko/20100101 Firefox/138.0",
       Origin: "https://zapier.com",
       "Alt-Used": "zapier.com",
       Connection: "keep-alive",
       Referer:
-        "https://zapier.com/editor/299667490/draft/_GEN_1748188434247/sample",
-      Cookie:
-        "visitor_id=7d9a6b21-dda1-4c26-a5ee-79e9d457338d; _dd_s=rum=0&expire=1748191504783&logs=1&id=6b9b6c62-d538-41e5-a531-10682b44fec9&created=1748188434256; session_id=aca3ec42-2699-4c19-a81b-2264a06d2b49; zapidentity=-756356569; ssohint=7b37135c-c13b-46e9-b667-cff353566dd7; zapha=true; csrftoken=i70DalPUgdEgkVf541s7f5uwa9JNaQ6lOtEthX7fn3uaDRc7E1jB19bcyFCKVjRE; billing_downgrade_flow_reorder=1; ssoid=eyJzayI6ImdBQUFBQUJvTTBWOUloZVlKQllkYlVJSUpHbS1RcXVMVmR3N0tpZXZSQ0xIV0JFSXNpcEY2R2YtSWc3a08zNFZhUFpGcGtld0hBa19JTFFjQlQzaHFESFgwVmZKOE5DYkYyMnV2cWlvck9WTjRZOTdDZ3JRalozVXd6dlZpUTNtZG9QcEg1R0JfR3RxIiwiY2lkIjoxODEyNDI2OX0:1uJEEP:WcNYbaFRG8aOToMfZATxEQZ6afbPMNdQ_ZQB00cQWJw; signonidentity=REVQUkVDQVRFRA; zapsession=i0vi72bz5z64aawf9we95ewsluncjs1a; AMP_66c1d651b8=JTdCJTIyZGV2aWNlSWQlMjIlM0ElMjIyN2RkOTdmMS03MzA5LTQ2YjMtYTI3MS00YjZlMzUzMzE4OGElMjIlMkMlMjJ1c2VySWQlMjIlM0ElMjIxODEyNDI2OSUyMiUyQyUyMnNlc3Npb25JZCUyMiUzQTE3NDgxODg0MzQzMTglMkMlMjJvcHRPdXQlMjIlM0FmYWxzZSUyQyUyMmxhc3RFdmVudFRpbWUlMjIlM0ExNzQ4MTkwNjA0ODczJTJDJTIybGFzdEV2ZW50SWQlMjIlM0E5NCUyQyUyMnBhZ2VDb3VudGVyJTIyJTNBMCU3RA==; AMP_MKTG_66c1d651b8=JTdCJTIycmVmZXJyZXIlMjIlM0ElMjJodHRwcyUzQSUyRiUyRmFjY291bnRzLmdvb2dsZS5jb20lMkYlMjIlMkMlMjJyZWZlcnJpbmdfZG9tYWluJTIyJTNBJTIyYWNjb3VudHMuZ29vZ2xlLmNvbSUyMiU3RA==; intercom-id-su0xp8g6=f0158741-0bc2-41f2-882d-a7aba47b21e8; intercom-session-su0xp8g6=K1pqT1dobWVhVEZCZ09zYjI3K2t6V0NFbnFmam0vSm5NQU9UR3VTbEs3RDl1dElJVVBLeTNOWXpSdE5Tcy83d0dWV283OGx1ak45b0NTdkZUNXFadGd2ZXJqem84QXZSL0RwQTNZdkI4a0E9LS1wWE5WSkJFQ0JUb0MzeTlpZDQzV1hnPT0=--827b4d687336fe03ae8b3b68ce95e250aedca8a2; intercom-device-id-su0xp8g6=c18c9ded-10df-4925-956c-c0859c4c7253; OptanonConsent=isGpcEnabled=0&datestamp=Sun+May+25+2025+18%3A29%3A50+GMT%2B0200+(Central+European+Summer+Time)&version=202401.1.0&browserGpcFlag=0&isIABGlobal=false&hosts=&landingPath=NotLandingPage&groups=C0004%3A1%2CC0005%3A1%2CC0002%3A1%2CC0003%3A1%2CC0001%3A1&AwaitingReconsent=false; OptanonConsentInSided=C0005; _gcl_au=1.1.141136851.1748188445; fs_lua=1.1748190581022; fs_uid=#1XM#df50416c-68b8-44d3-a18c-9a3bb2cd198d:0e1af4ce-03bb-4394-968d-4d771003ae64:1748188446157::10#a484bb1c#/1779724468; _tt_enable_cookie=1; _ttp=01JW42DG1W4MWMC0M9FEHNWB77_.tt.1; ttcsid_CCLOU5BC77U1QCQHCUEG=1748188446783::FCJZLEnQzJOLS7xhY-5j.1.1748190604855; ttcsid=1748188446783::IxALEbXQLelp78y2obkW.1.1748190604856; lastVisitedPage=plans; _gcl_aw=GCL.1748188973.Cj0KCQjw_8rBBhCFARIsAJrc9yAfGCDpq0Z-VHrUnvv_qruBeiKjYyj9G7X0RW9shpMNlHhFgvBvDT0aAkBDEALw_wcB; _gcl_gs=2.1.k1$i1748188963$u206606488; NPS_180ad05e_last_seen=1748189438275; currentAccountId=18124313; _uetsid=7cd6d1d0398011f09644d39bffa45338; _uetvid=7cd6c000398011f091ce37c3d3808f85",
+        "https://zapier.com/editor/" +
+        zapierAccount.zap_id +
+        "/draft/" +
+        zapierAccount.GEN_ID +
+        "/sample",
+      Cookie: zapierAccount.cookies,
     },
   };
 
   try {
     await makeRequest(
-      "https://zapier.com/api/gulliver/storage/v1/zaps/299667490?account_id=18124313",
+      "https://zapier.com/api/gulliver/storage/v1/zaps/" +
+        zapierAccount.zap_id +
+        "?account_id=" +
+        zapierAccount.cookies.split("currentAccountId=")[1].split(";")[0],
       patchOptions,
       patchData
     );
@@ -388,20 +482,44 @@ async function uploadVideo(account, videoToPost, schedule, testMode = false) {
         "Accept-Language": "en-US,en;q=0.5",
         "Accept-Encoding": "gzip, deflate, br, zstd",
         "Content-Type": "application/json",
-        "X-CSRFToken":
-          "i70DalPUgdEgkVf541s7f5uwa9JNaQ6lOtEthX7fn3uaDRc7E1jB19bcyFCKVjRE",
+        "X-CSRFToken": zapierAccount.cookies
+          .split("csrftoken=")[1]
+          .split(";")[0],
+        "User-Agent":
+          "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:138.0) Gecko/20100101 Firefox/138.0",
+
         Origin: "https://zapier.com",
         "Alt-Used": "zapier.com",
         Connection: "keep-alive",
         Referer:
-          "https://zapier.com/editor/299667490/draft/_GEN_1748188434247/sample",
-        Cookie:
-          "visitor_id=7d9a6b21-dda1-4c26-a5ee-79e9d457338d; _dd_s=rum=0&expire=1748190015806&logs=1&id=6b9b6c62-d538-41e5-a531-10682b44fec9&created=1748188434256; session_id=aca3ec42-2699-4c19-a81b-2264a06d2b49; zapidentity=-756356569; ssohint=7b37135c-c13b-46e9-b667-cff353566dd7; zapha=true; csrftoken=i70DalPUgdEgkVf541s7f5uwa9JNaQ6lOtEthX7fn3uaDRc7E1jB19bcyFCKVjRE; currentAccountId=18124313; billing_downgrade_flow_reorder=1; ssoid=eyJzayI6ImdBQUFBQUJvTXpfSEhqZFJUYmhxbElpWlJDdHZOenJfanN4c05QZjlnMjd3dng2b1RqSEl6NVp4QXpIUmhzaEwxZHVlRnVnR3U5TEVFOGQtcENjODRaRlZIVG12aG0xN05GRmNzbFk5NzFhTlp2SjVMNWtteDNSUVk3RzgxUlZGNkRHTlJUcDFRT29iIiwiY2lkIjoxODEyNDI2OX0:1uJDqp:srpKu6qRspwN8itTiCCgpYAd6mo4z6sz1uL2EGb9ju0; signonidentity=REVQUkVDQVRFRA; zapsession=i0vi72bz5z64aawf9we95ewsluncjs1a; AMP_66c1d651b8=JTdCJTIyZGV2aWNlSWQlMjIlM0ElMjIyN2RkOTdmMS03MzA5LTQ2YjMtYTI3MS00YjZlMzUzMzE4OGElMjIlMkMlMjJ1c2VySWQlMjIlM0ElMjIxODEyNDI2OSUyMiUyQyUyMnNlc3Npb25JZCUyMiUzQTE3NDgxODg0MzQzMTglMkMlMjJvcHRPdXQlMjIlM0FmYWxzZSUyQyUyMmxhc3RFdmVudFRpbWUlMjIlM0ExNzQ4MTg4OTA1MjM3JTJDJTIybGFzdEV2ZW50SWQlMjIlM0E1OCUyQyUyMnBhZ2VDb3VudGVyJTIyJTNBMCU3RA==; AMP_MKTG_66c1d651b8=JTdCJTIycmVmZXJyZXIlMjIlM0ElMjJodHRwcyUzQSUyRiUyRmFjY291bnRzLmdvb2dsZS5jb20lMkYlMjIlMkMlMjJyZWZlcnJpbmdfZG9tYWluJTIyJTNBJTIyYWNjb3VudHMuZ29vZ2xlLmNvbSUyMiU3RA==; intercom-id-su0xp8g6=f0158741-0bc2-41f2-882d-a7aba47b21e8; intercom-session-su0xp8g6=cHljNmplcVY2M3MzblpoUjh5SS9teng5N2ZwUEFXTDZvbllxcjVGM28zTVlQSG9RWWdyb1VBK086OHZrQ2V2YXlWWWtDZXNlZHZQWDA0SXh6Vm81amZuWEFxM3lZUGVQWXliRzlQaFd1ajA9LS1MT3BkT3hEcTBwTnllQzJDM1JpcmdnPT0=--5916c72357222531523d657ba6a22bf044147bee; intercom-device-id-su0xp8g6=c18c9ded-10df-4925-956c-c0859c4c7253; OptanonConsent=isGpcEnabled=0&datestamp=Sun+May+25+2025+18%3A02%3A52+GMT%2B0200+(Central+European+Summer+Time)&version=202401.1.0&browserGpcFlag=0&isIABGlobal=false&hosts=&landingPath=NotLandingPage&groups=C0004%3A1%2CC0005%3A1%2CC0002%3A1%2CC0003%3A1%2CC0001%3A1&AwaitingReconsent=false; OptanonConsentInSided=C0005; _gcl_au=1.1.141136851.1748188445; fs_lua=1.1748188952477; fs_uid=#1XM#df50416c-68b8-44d3-a18c-9a3bb2cd198d:0e1af4ce-03bb-4394-968d-4d771003ae64:1748188446157::2#/1779724449; _tt_enable_cookie=1; _ttp=01JW42DG1W4MWMC0M9FEHNWB77_.tt.1; ttcsid_CCLOU5BC77U1QCQHCUEG=1748188446783::FCJZLEnQzJOLS7xhY-5j.1.1748188967054; ttcsid=1748188446783::IxALEbXQLelp78y2obkW.1.1748188966744; lastVisitedPage=plans; _gcl_aw=GCL.1748188973.Cj0KCQjw_8rBBhCFARIsAJrc9yAfGCDpq0Z-VHrUnvv_qruBeiKjYyj9G7X0RW9shpMNlHhFgvBvDT0aAkBDEALw_wcB; _gcl_gs=2.1.k1$i1748188963$u206606488; _uetsid=7cd6d1d0398011f09644d39bffa45338; _uetvid=7cd6c000398011f091ce37c3d3808f85",
+          "https://zapier.com/editor/" +
+          zapierAccount.zap_id +
+          "/draft/" +
+          zapierAccount.GEN_ID +
+          "/sample",
+        Cookie: zapierAccount.cookies,
       },
     };
     if (!testMode) {
+      // console.log("\n\n\n\n", {
+      //   url:
+      //     "https://zapier.com/api/gulliver/steptesting/v2/zaps/" +
+      //     zapierAccount.zap_id +
+      //     "/steps/" +
+      //     zapierAccount.GEN_ID +
+      //     "/output/test/run?account_id=" +
+      //     zapierAccount.cookies.split("currentAccountId=")[1].split(";")[0] +
+      //     "&origin=main",
+      //   postOptions,
+      // });
       const postResponse = await makeRequest(
-        "https://zapier.com/api/gulliver/steptesting/v2/zaps/299667490/steps/_GEN_1748188434247/output/test/run?account_id=18124313",
+        "https://zapier.com/api/gulliver/steptesting/v2/zaps/" +
+          zapierAccount.zap_id +
+          "/steps/" +
+          zapierAccount.GEN_ID +
+          "/output/test/run?account_id=" +
+          zapierAccount.cookies.split("currentAccountId=")[1].split(";")[0] +
+          "&origin=main",
         postOptions,
         "{}"
       );
