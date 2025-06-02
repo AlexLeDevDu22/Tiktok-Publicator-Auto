@@ -387,7 +387,7 @@ async function uploadVideo(
       zdl_version: "0.4",
       steps: [
         {
-          id: zapierAccount.zap_id,
+          id: zapierAccount.zap_id.toString(),
           app: "CodeCLIAPI@1.0.1",
           type: "read",
           action: "",
@@ -434,7 +434,7 @@ async function uploadVideo(
         },
       ],
     },
-    title: "",
+    title: "Untitled Zap",
     description: "",
     legacy_node_id: null,
     is_enabled: false,
@@ -465,7 +465,16 @@ async function uploadVideo(
   };
 
   try {
-    await makeRequest(
+    // console.log({
+    //   url:
+    //     "https://zapier.com/api/gulliver/storage/v1/zaps/" +
+    //     zapierAccount.zap_id +
+    //     "?account_id=" +
+    //     zapierAccount.cookies.split("currentAccountId=")[1].split(";")[0],
+    //   patchOptions,
+    //   patchData,
+    // });
+    const response = await makeRequest(
       "https://zapier.com/api/gulliver/storage/v1/zaps/" +
         zapierAccount.zap_id +
         "?account_id=" +
@@ -473,6 +482,14 @@ async function uploadVideo(
       patchOptions,
       patchData
     );
+    if (![200, 201].includes(response.statusCode)) {
+      console.error(
+        "Error patching zapier account",
+        response.statusCode,
+        response.data
+      );
+      throw new Error("Failed to patch Zapier account");
+    }
 
     // Deuxième requête POST
     const postOptions = {
@@ -485,9 +502,11 @@ async function uploadVideo(
         "X-CSRFToken": zapierAccount.cookies
           .split("csrftoken=")[1]
           .split(";")[0],
+
         "User-Agent":
           "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:138.0) Gecko/20100101 Firefox/138.0",
-
+        DNT: "1",
+        "Sec-GPC": "1",
         Origin: "https://zapier.com",
         "Alt-Used": "zapier.com",
         Connection: "keep-alive",
@@ -498,6 +517,11 @@ async function uploadVideo(
           zapierAccount.GEN_ID +
           "/sample",
         Cookie: zapierAccount.cookies,
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        Priority: "u=0",
+        TE: "trailers",
       },
     };
     if (!testMode) {
@@ -523,8 +547,10 @@ async function uploadVideo(
         postOptions,
         "{}"
       );
-      if (![200, 201].includes(postResponse.statusCode))
+      if (![200, 201].includes(postResponse.statusCode)) {
         console.error("error posting", postResponse.data);
+        throw new Error("Failed to post Zapier account");
+      }
     }
   } catch (error) {
     console.error("Erreur lors de l'exécution:", error.message);
