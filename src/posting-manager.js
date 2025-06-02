@@ -30,6 +30,16 @@ async function schedulingTodayPosting(db) {
   // ✅ Utiliser for...of au lieu de forEach pour éviter les race conditions
   for (const account of accounts) {
     if (!account.active) continue;
+    const accountColor = [
+      `\x1b[40m`,
+      `\x1b[41m`,
+      `\x1b[42m`,
+      `\x1b[43m`,
+      `\x1b[44m`,
+      `\x1b[45m`,
+      `\x1b[46m`,
+      `\x1b[47m`,
+    ][account.id % 8]; // ✅ Couleurs de fond pour chaque compte
     try {
       // Récupérer les meilleures heures une seule fois par compte
       let bestHoursToPost = await tiktokStats.bestHoursToPost(
@@ -38,17 +48,6 @@ async function schedulingTodayPosting(db) {
       );
 
       for (let i = 0; i < account.daily_tiktok_count; i++) {
-        const accountColor = [
-          `\x1b[40m`,
-          `\x1b[41m`,
-          `\x1b[42m`,
-          `\x1b[43m`,
-          `\x1b[44m`,
-          `\x1b[45m`,
-          `\x1b[46m`,
-          `\x1b[47m`,
-        ][account.id % 8]; // ✅ Couleurs de fond pour chaque compte
-
         const postedToday = await getPostedTodayCount(db, account.id);
 
         if (i < postedToday) {
@@ -77,7 +76,7 @@ async function schedulingTodayPosting(db) {
         }
 
         const now = new Date();
-        const execDate = new Date(
+        let execDate = new Date(
           now.getFullYear(),
           now.getMonth(),
           now.getDate(),
@@ -88,7 +87,7 @@ async function schedulingTodayPosting(db) {
 
         // ✅ Si l'heure est déjà passée, programmer pour le lendemain
         if (execDate <= now) {
-          execDate.setDate(execDate.getDate() + 1);
+          execDate = null;
         }
         console.log(
           "\x1b[34m%s\x1b[0m",
@@ -100,17 +99,17 @@ async function schedulingTodayPosting(db) {
         );
 
         // ✅ Passer le last_tiktok_id actuel à hubRepost
-        await hubRepost(db, account, execDate, currentLastTiktokId);
+        await hubRepost(db, account, execDate, currentLastTiktokId, false);
       }
     } catch (error) {
       console.error(
         `Error processing account ${
           accountColor + account.pseudo + "\x1b[0m"
         }: `,
-        error.message
+        error
       );
       // ✅ Continuer avec les autres comptes même si un échoue
-      continue;
+      return; //! for TEST!!!!!!!
     }
   }
 }
@@ -461,6 +460,13 @@ async function uploadVideo(
         zapierAccount.GEN_ID +
         "/sample",
       Cookie: zapierAccount.cookies,
+
+      DNT: "1",
+      "Sec-Fetch-Dest": "empty",
+      "Sec-Fetch-Mode": "cors",
+      "Sec-Fetch-Site": "same-origin",
+      TE: "trailers",
+      "Sec-GPC": "1",
     },
   };
 

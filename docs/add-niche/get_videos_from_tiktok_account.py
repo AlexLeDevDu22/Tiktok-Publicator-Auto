@@ -5,10 +5,9 @@ import json,os
 from bs4 import BeautifulSoup
 #https://www.tiktok.com/@pickyourinitials/video/7335508841376894250
 
-ACCOUNT="poeticbonds"
+ACCOUNT="scary.story976"
 
 start_index=0
-
 
 driver = webdriver.Chrome()
 driver.get("https://www.tiktok.com/@"+ACCOUNT)

@@ -54,9 +54,6 @@ sql = f"INSERT INTO stored_tiktoks ({columns_str}) VALUES ({placeholders})"
 values = [tuple(row[col] for col in columns) for row in videos]
 
 # Créer la requête SQL complète avec les valeurs
-# Créer la requête SQL complète avec les valeurs
-# Créer la requête SQL complète avec les valeurs
-# Créer la requête SQL complète avec les valeurs
 full_query = ""
 for i, value in enumerate(values):
     full_query += f"INSERT INTO stored_tiktoks ({columns_str}) VALUES ("
