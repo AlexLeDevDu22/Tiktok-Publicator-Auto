@@ -109,7 +109,6 @@ async function schedulingTodayPosting(db) {
         error
       );
       // ✅ Continuer avec les autres comptes même si un échoue
-      return; //! for TEST!!!!!!!
     }
   }
 }
