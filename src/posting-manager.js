@@ -55,7 +55,7 @@ async function schedulingTodayPosting(db) {
           console.log(
             "\x1b[33m%s\x1b[0m",
             `Skipping post ${i + 1} for account ${
-              (accountColor, account.pseudo, "\x1b[33m%s\x1b[0m")
+              accountColor + account.pseudo + "\x1b[0m"
             } - already posted for ${new Date().toLocaleString()} (${postedToday}/${
               account.daily_tiktok_count
             })`
