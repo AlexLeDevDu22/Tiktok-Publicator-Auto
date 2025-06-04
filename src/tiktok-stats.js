@@ -8,9 +8,7 @@ const utils = require("./utils.js");
  * @param {{id: number, sessionid: string}} account - Le compte TikTok
  */
 async function SaveDaysStats(db, account) {
-  // Date de départ absolue
-  const START_DATE = new Date("2023-01-03");
-
+  if (!account.sessionid || account.sessionid === "") return;
   // Récupère la dernière date présente en DB pour ce compte
   const [rows] = await db.query(
     "SELECT MAX(day) as last_day FROM stats_per_days WHERE account_id = ?",
@@ -20,7 +18,7 @@ async function SaveDaysStats(db, account) {
   // Calcule la date de début : soit la dernière enregistrée + 1 jour, soit la date de départ
   let lastSavedDate = rows[0].last_day
     ? new Date(rows[0].last_day)
-    : START_DATE;
+    : account.created_at;
 
   // +1 jour pour commencer au jour suivant
   lastSavedDate.setDate(lastSavedDate.getDate() + 1);
@@ -59,28 +57,24 @@ async function SaveDaysStats(db, account) {
   );
 
   const datas = await response.json();
-  try {
-    for (let i = 0; i < daysToFetch; i++) {
-      const date = new Date(lastSavedDate);
-      date.setDate(date.getDate() + i);
+  for (let i = 0; i < daysToFetch; i++) {
+    const date = new Date(lastSavedDate);
+    date.setDate(date.getDate() + i);
 
-      await db.query(
-        "INSERT INTO `stats_per_days` (day, account_id, views, likes, pv, comments, shares, follows, rewards) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-          date.toISOString().split("T")[0],
-          account.id,
-          datas.vv_history[i]?.value || 0,
-          datas.like_history[i]?.value || 0,
-          datas.pv_history[i]?.value || 0,
-          datas.comment_history[i]?.value || 0,
-          datas.share_history[i]?.value || 0,
-          datas.net_follower_history[i]?.value || 0,
-          datas.user_rewards_data.est_rewards_diff_num[i]?.value || 0,
-        ]
-      );
-    }
-  } catch (error) {
-    //session ids not set for everyone
+    await db.query(
+      "INSERT INTO `stats_per_days` (day, account_id, views, likes, pv, comments, shares, follows, rewards) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        date.toISOString().split("T")[0],
+        account.id,
+        datas.vv_history[i]?.value || 0,
+        datas.like_history[i]?.value || 0,
+        datas.pv_history[i]?.value || 0,
+        datas.comment_history[i]?.value || 0,
+        datas.share_history[i]?.value || 0,
+        datas.net_follower_history[i]?.value || 0,
+        datas.user_rewards_data.est_rewards_diff_num[i]?.value || 0,
+      ]
+    );
   }
 }
 
@@ -142,11 +136,18 @@ async function bestHoursToPost(account, n) {
 }
 
 async function init(db) {
-  (await utils.getAccountsData(db, "*")).forEach((account) => {
-    SaveDaysStats(db, account);
-    cron.schedule("0 0 * * *", () => {
-      SaveDaysStats(db, account);
-    });
+  const accounts = await utils.getAccountsData(db, "*");
+
+  for (const account of accounts) {
+    await SaveDaysStats(db, account);
+  }
+
+  cron.schedule("0 0 * * *", async () => {
+    const accounts = await utils.getAccountsData(db, "*");
+
+    for (const account of accounts) {
+      await SaveDaysStats(db, account);
+    }
   });
 }
 
