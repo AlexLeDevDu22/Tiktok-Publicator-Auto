@@ -5,7 +5,7 @@ import json,os
 from bs4 import BeautifulSoup
 #https://www.tiktok.com/@pickyourinitials/video/7335508841376894250
 
-ACCOUNT="scary.story976"
+ACCOUNT="timeportals"
 
 start_index=0
 

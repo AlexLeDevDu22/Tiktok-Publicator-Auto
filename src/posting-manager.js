@@ -28,6 +28,11 @@ async function schedulingTodayPosting(db) {
   const accounts = await utils.getAccountsData(db, "*");
 
   // ✅ Utiliser for...of au lieu de forEach pour éviter les race conditions
+  console.log(
+    "\x1b[35m%s\x1b[0m",
+    "[Midnight] Starting scheduling for " +
+      new Date().toLocaleDateString("en-FR")
+  );
   for (const account of accounts) {
     if (!account.active) continue;
     const accountColor = [
@@ -55,9 +60,9 @@ async function schedulingTodayPosting(db) {
             "\x1b[33m%s\x1b[0m",
             `Skipping post ${i + 1} for account ${
               accountColor + account.pseudo + "\x1b[0m"
-            } - already posted for ${new Date().toLocaleString()} (${postedToday}/${
-              account.daily_tiktok_count
-            })`
+            } - already posted for ${new Date().toLocaleDateString(
+              "en-FR"
+            )} (${postedToday}/${account.daily_tiktok_count})`
           );
           continue;
         }
@@ -91,15 +96,17 @@ async function schedulingTodayPosting(db) {
         }
         console.log(
           "\x1b[34m%s\x1b[0m",
-          `Processing posting for ${
+          `Processing publishing for ${
             accountColor + account.pseudo + " \x1b[34m\x1b[0m"
-          } at ${execDate ? execDate.toISOString() : "now"} (${i + 1}/${
-            account.daily_tiktok_count
-          })`
+          } at ${
+            execDate
+              ? execDate.toLocaleString("fr-FR", { timeZone: "UTC" })
+              : "NOW"
+          } (${i + 1}/${account.daily_tiktok_count})`
         );
 
         // ✅ Passer le last_tiktok_id actuel à hubRepost
-        await hubRepost(db, account, execDate, currentLastTiktokId, false);
+        await hubRepost(db, account, execDate, currentLastTiktokId, true);
       }
     } catch (error) {
       console.error(
@@ -139,7 +146,7 @@ async function hubRepost(
 
     // ✅ Sélectionner la prochaine vidéo avec verrou
     const [rows] = await connection.query(
-      "SELECT * FROM `stored_tiktoks` WHERE `niche_id` = ? AND `id` > ? ORDER BY `id` ASC LIMIT 1 FOR UPDATE",
+      "SELECT * FROM `stored_tiktoks` WHERE `niche_id` = ? AND `id` > ? ORDER BY `id` ASC LIMIT 1",
       [account.niche_belonged, currentLastId]
     );
 
@@ -189,29 +196,11 @@ async function hubRepost(
         "UPDATE `accounts` SET `last_tiktok_id` = ? WHERE `id` = ?",
         [videoToPost.id, account.id]
       );
+
+      // ✅ Commit avant l'upload pour éviter les doublons même si l'upload échoue
+      await connection.commit();
+      connection.release();
     }
-
-    if (!testMode) {
-      // ✅ Insérer la publication avec un statut approprié
-      const publicationStatus =
-        schedule && schedule > new Date() ? "scheduled" : "published";
-      const publicationDate = schedule || new Date();
-
-      await connection.query(
-        "INSERT INTO `publications` (`tiktok_id`, `at_account`, `description`, `date`, `status`) VALUES (?,?,?,?,?)",
-        [
-          videoToPost.id,
-          account.id,
-          videoToPost.initial_description,
-          publicationDate,
-          publicationStatus,
-        ]
-      );
-    }
-
-    // ✅ Commit avant l'upload pour éviter les doublons même si l'upload échoue
-    await connection.commit();
-    connection.release();
 
     // Récupérer les données de l'account Zapier
     const [zapierAccount] = await connection.query(
@@ -219,64 +208,76 @@ async function hubRepost(
       [account.zapier_belonged_id]
     );
 
-    // ✅ Upload de la vidéo (en dehors de la transaction)
-    try {
-      await uploadVideo(
-        zapierAccount[0],
-        account,
-        videoToPost,
-        schedule,
-        testMode
-      );
+    // ✅ Upload de la vidéo
+    const uploadSuccess = await uploadVideo(
+      zapierAccount[0],
+      account,
+      videoToPost,
+      schedule,
+      testMode
+    );
+    if (uploadSuccess) {
       console.log(
         "\x1b[32m%s\x1b[0m",
-        `Video uploaded/published successfully: ${videoToPost.id} for account ${
-          accountColor + account.pseudo
-        }`
-      );
-    } catch (uploadError) {
-      console.error(
-        `Upload failed for video ${videoToPost.id}, account ${account.id}:`,
-        uploadError.message
+        `Video scheduled/published successfully: ${
+          videoToPost.id
+        } for account ${accountColor + account.pseudo}`
       );
       if (!testMode) {
-        // ✅ Marquer comme échoué au lieu de faire un rollback complet
-        await db.query(
-          "UPDATE `publications` SET `status` = 'failed' WHERE `tiktok_id` = ? AND `at_account` = ?",
-          [videoToPost.id, account.id]
+        // ✅ Insérer la publication avec un statut approprié
+        const publicationStatus =
+          schedule && schedule > new Date() ? "scheduled" : "published";
+        const publicationDate = schedule || new Date();
+
+        await connection.query(
+          "INSERT INTO `publications` (`tiktok_id`, `at_account`, `description`, `date`, `status`) VALUES (?,?,?,?,?)",
+          [
+            videoToPost.id,
+            account.id,
+            videoToPost.initial_description,
+            publicationDate,
+            publicationStatus,
+          ]
         );
       }
-    }
 
-    // ✅ Programmer la mise à jour du statut si c'est schedulé
-    if (!testMode && schedule && schedule > new Date()) {
-      const scheduleDate = new Date(schedule);
-      const cronTime = `${scheduleDate.getMinutes()} ${scheduleDate.getHours()} ${scheduleDate.getDate()} ${
-        scheduleDate.getMonth() + 1
-      } *`;
+      // ✅ Programmer la mise à jour du statut si c'est schedulé
+      if (!testMode && schedule && schedule > new Date()) {
+        const scheduleDate = new Date(schedule);
+        const cronTime = `${scheduleDate.getMinutes()} ${scheduleDate.getHours()} ${scheduleDate.getDate()} ${
+          scheduleDate.getMonth() + 1
+        } *`;
 
-      cron.schedule(
-        cronTime,
-        async () => {
-          try {
+        cron.schedule(
+          cronTime,
+          async () => {
             await db.query(
               "UPDATE `publications` SET `status` = 'published' WHERE `tiktok_id` = ? AND `at_account` = ?",
               [videoToPost.id, account.id]
             );
-          } catch (cronError) {
-            console.error(
-              `Failed to update status for video ${videoToPost.id}:`,
-              cronError.message
-            );
-          }
-        },
-        { scheduled: true }
+          },
+          { scheduled: true }
+        );
+      }
+    } else {
+      console.error(
+        `\x1b[31m%s\x1b[0m Upload failed for video ${videoToPost.id}, account ${account.pseudo}:`
       );
+
+      if (!testMode) {
+        await connection.query(
+          "INSERT INTO `publications` (`tiktok_id`, `at_account`, `description`, `date`, `status`) VALUES (?,?,?,?,?)",
+          [
+            videoToPost.id,
+            account.id,
+            videoToPost.initial_description,
+            publicationDate,
+            "failed",
+          ]
+        );
+      } else process.exit(1);
     }
   } catch (error) {
-    // ✅ Rollback en cas d'erreur
-    await connection.rollback();
-    connection.release();
     console.error(
       `Error in hubRepost for account ${account.id}:`,
       error.message
@@ -493,7 +494,7 @@ async function uploadVideo(
         response.statusCode,
         response.data
       );
-      throw new Error("Failed to patch Zapier account");
+      return false;
     }
 
     // Deuxième requête POST
@@ -554,13 +555,15 @@ async function uploadVideo(
       );
       if (![200, 201].includes(postResponse.statusCode)) {
         console.error("error posting", postResponse.data);
-        throw new Error("Failed to post Zapier account");
+        return false;
       }
     }
   } catch (error) {
-    console.error("Erreur lors de l'exécution:", error.message);
-    process.exit(1);
+    console.error("Erreur lors de l'upload:", error.message);
+    return false;
   }
+
+  return true;
 }
 
 /**
