@@ -30,7 +30,7 @@ async function schedulingTodayPosting(db) {
   // ✅ Utiliser for...of au lieu de forEach pour éviter les race conditions
   console.log(
     "\x1b[35m%s\x1b[0m",
-    "[Midnight] Starting scheduling for " +
+    "\n[Midnight] Starting scheduling for " +
       new Date().toLocaleDateString("en-FR")
   );
   for (const account of accounts) {
@@ -106,7 +106,7 @@ async function schedulingTodayPosting(db) {
         );
 
         // ✅ Passer le last_tiktok_id actuel à hubRepost
-        await hubRepost(db, account, execDate, currentLastTiktokId, true);
+        await hubRepost(db, account, execDate, currentLastTiktokId, false);
       }
     } catch (error) {
       console.error(
@@ -163,24 +163,20 @@ async function hubRepost(
       "SELECT id FROM publications WHERE tiktok_id = ? AND at_account = ?",
       [videoToPost.id, account.id]
     );
-
-    if (existingPub.length > 0) {
-      console.warn(
-        `Video ${videoToPost.id} already published for account ${
-          accountColor + account.pseudo + "\x1b[0m"
-        }, skipping`
-      );
-      await connection.rollback();
-      connection.release();
-      return;
-    }
-
     const isMp4 = await isVideo(videoToPost.link);
-    if (!isMp4) {
-      console.warn(
-        "\x1b[36m%s\x1b[0m",
-        `Tiktok ${videoToPost.id} is not a video, next video...`
-      );
+
+    if (!isMp4 || existingPub.length > 0) {
+      if (!isMp4)
+        console.warn(
+          "\x1b[36m%s\x1b[0m",
+          `Tiktok ${videoToPost.id} is not a video, next link...`
+        );
+      else
+        console.warn(
+          `Video ${videoToPost.id} already published for account ${
+            accountColor + account.pseudo + "\x1b[0m"
+          }, skipping`
+        );
       await connection.query(
         "UPDATE `accounts` SET `last_tiktok_id` = ? WHERE `id` = ?",
         [videoToPost.id + 1, account.id]

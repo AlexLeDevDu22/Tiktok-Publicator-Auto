@@ -3,9 +3,8 @@
 from selenium import webdriver
 import json,os
 from bs4 import BeautifulSoup
-#https://www.tiktok.com/@pickyourinitials/video/7335508841376894250
 
-ACCOUNT="timeportals"
+ACCOUNT="astrotikdaily"
 
 start_index=0
 
