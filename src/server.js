@@ -27,11 +27,15 @@ const db = pool.promise();
 // POST endpoint
 app.post("/post-video", async (req, res) => {
   try {
-    const account = req.body.account;
+    const account = await db.query("SELECT * FROM accounts WHERE id = ?", [
+      req.body.account_id,
+    ]);
     const result = await postingManager.hubRepost(
       db,
       account,
-      req.body.schedule ? new Date(req.body.schedule) : null
+      !req.body.now,
+      null,
+      0
     );
     res.status(200).json({ message: result });
   } catch (error) {

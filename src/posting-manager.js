@@ -31,7 +31,7 @@ async function schedulingTodayPosting(db) {
   console.log(
     "\x1b[35m%s\x1b[0m",
     "\n[Midnight] Starting scheduling for " +
-      new Date().toLocaleDateString("en-FR")
+      new Date().toLocaleDateString("fr-FR")
   );
   for (const account of accounts) {
     if (!account.active) continue;
@@ -46,12 +46,6 @@ async function schedulingTodayPosting(db) {
       `\x1b[47m`,
     ][account.id % 8]; // ✅ Couleurs de fond pour chaque compte
     try {
-      // Récupérer les meilleures heures une seule fois par compte
-      let bestHoursToPost = await tiktokStats.bestHoursToPost(
-        account,
-        account.daily_tiktok_count
-      );
-
       for (let i = 0; i < account.daily_tiktok_count; i++) {
         const postedToday = await getPostedTodayCount(db, account.id);
 
@@ -67,46 +61,8 @@ async function schedulingTodayPosting(db) {
           continue;
         }
 
-        // ✅ Récupérer last_tiktok_id depuis la DB pour éviter les conflits
-        const [accountRows] = await db.query(
-          "SELECT last_tiktok_id FROM accounts WHERE id = ?",
-          [account.id]
-        );
-        const currentLastTiktokId = accountRows[0].last_tiktok_id;
-
-        // Calculer l'horaire de publication
-        let scheduleHours = null;
-        if (account.social_media === "tiktok") {
-          scheduleHours = bestHoursToPost[i];
-        }
-
-        const now = new Date();
-        let execDate = new Date(
-          now.getFullYear(),
-          now.getMonth(),
-          now.getDate(),
-          scheduleHours || [9, 14, 19][i % 3], // ✅ Horaires plus logiques
-          Math.floor(Math.random() * 60), // ✅ Ajouter quelques minutes aléatoires
-          0
-        );
-
-        // ✅ Si l'heure est déjà passée, programmer pour le lendemain
-        if (execDate <= now) {
-          execDate = null;
-        }
-        console.log(
-          "\x1b[34m%s\x1b[0m",
-          `Processing publishing for ${
-            accountColor + account.pseudo + " \x1b[34m\x1b[0m"
-          } at ${
-            execDate
-              ? execDate.toLocaleString("fr-FR", { timeZone: "UTC" })
-              : "NOW"
-          } (${i + 1}/${account.daily_tiktok_count})`
-        );
-
         // ✅ Passer le last_tiktok_id actuel à hubRepost
-        await hubRepost(db, account, execDate, currentLastTiktokId, false);
+        await hubRepost(db, account, true, accountColor, i, false);
       }
     } catch (error) {
       console.error(
@@ -124,27 +80,25 @@ async function schedulingTodayPosting(db) {
 async function hubRepost(
   db,
   account,
-  schedule,
-  lastTiktokId = null,
-  testMode = false,
-  accountColor = "\x1b[47m"
+  possibleSchedule = true,
+  accountColor = "\x1b[47m",
+  turnNum,
+  testMode = false
 ) {
   // ✅ Utiliser une transaction pour assurer l'atomicité
   const connection = await db.getConnection();
   await connection.beginTransaction();
 
   try {
-    // ✅ Si lastTiktokId n'est pas fourni, le récupérer avec un verrou
-    const currentLastId =
-      lastTiktokId ||
-      (
-        await connection.query(
-          "SELECT last_tiktok_id FROM accounts WHERE id = ? FOR UPDATE",
-          [account.id]
-        )
-      )[0][0].last_tiktok_id;
+    // ✅ Si lastTiktokId n'est pas fourni, le récupérer
+    const currentLastId = (
+      await connection.query(
+        "SELECT last_tiktok_id FROM accounts WHERE id = ? FOR UPDATE",
+        [account.id]
+      )
+    )[0][0].last_tiktok_id;
 
-    // ✅ Sélectionner la prochaine vidéo avec verrou
+    // ✅ Sélectionner la prochaine vidéo
     const [rows] = await connection.query(
       "SELECT * FROM `stored_tiktoks` WHERE `niche_id` = ? AND `id` > ? ORDER BY `id` ASC LIMIT 1",
       [account.niche_belonged, currentLastId]
@@ -157,6 +111,23 @@ async function hubRepost(
     }
 
     const videoToPost = rows[0];
+
+    let schedule = null;
+    if (possibleSchedule) {
+      schedule = tiktokStats.getPostedTime(videoToPost.link.split("/").pop());
+      // ✅ Si l'heure est déjà passée, programmer pour maintenant
+      if (schedule <= new Date()) {
+        schedule = null;
+      }
+    }
+    console.log(
+      "\x1b[34m%s\x1b[0m",
+      `Processing scheduling for ${
+        accountColor + account.pseudo + " \x1b[34m\x1b[0m"
+      } at ${
+        schedule ? schedule.toLocaleString("fr-FR", { timeZone: "UTC" }) : "NOW"
+      } (${turnNum + 1}/${account.daily_tiktok_count})`
+    );
 
     // ✅ Vérifier qu'on n'a pas déjà publié cette vidéo pour ce compte
     const [existingPub] = await connection.query(
@@ -177,13 +148,25 @@ async function hubRepost(
             accountColor + account.pseudo + "\x1b[0m"
           }, skipping`
         );
+
+      const nextVideo = await connection.query(
+        "SELECT * FROM `stored_tiktoks` WHERE `niche_id` = ? AND `id` > ? ORDER BY `id` ASC LIMIT 1",
+        [account.niche_belonged, videoToPost.id]
+      );
       await connection.query(
         "UPDATE `accounts` SET `last_tiktok_id` = ? WHERE `id` = ?",
-        [videoToPost.id + 1, account.id]
+        [nextVideo[0][0].id, account.id]
       );
       await connection.commit();
       connection.release();
-      return hubRepost(db, account, schedule, videoToPost.id + 1, testMode);
+      return hubRepost(
+        db,
+        account,
+        possibleSchedule,
+        accountColor,
+        turnNum,
+        testMode
+      );
     }
 
     if (!testMode) {
@@ -223,7 +206,6 @@ async function hubRepost(
         // ✅ Insérer la publication avec un statut approprié
         const publicationStatus =
           schedule && schedule > new Date() ? "scheduled" : "published";
-        const publicationDate = schedule || new Date();
 
         await connection.query(
           "INSERT INTO `publications` (`tiktok_id`, `at_account`, `description`, `date`, `status`) VALUES (?,?,?,?,?)",
@@ -231,7 +213,7 @@ async function hubRepost(
             videoToPost.id,
             account.id,
             videoToPost.initial_description,
-            publicationDate,
+            schedule || new Date(),
             publicationStatus,
           ]
         );
@@ -267,7 +249,7 @@ async function hubRepost(
             videoToPost.id,
             account.id,
             videoToPost.initial_description,
-            publicationDate,
+            schedule || new Date(),
             "failed",
           ]
         );
@@ -429,7 +411,7 @@ async function uploadVideo(
         },
       ],
     },
-    title: "Untitled Zap",
+    title: "Tiktok Reposter",
     description: "",
     legacy_node_id: null,
     is_enabled: false,

@@ -4,7 +4,7 @@ from selenium import webdriver
 import json,os
 from bs4 import BeautifulSoup
 
-ACCOUNT="astrotikdaily"
+ACCOUNT="astroactu"
 
 start_index=0
 
