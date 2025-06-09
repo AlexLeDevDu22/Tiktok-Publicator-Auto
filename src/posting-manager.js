@@ -114,7 +114,12 @@ async function hubRepost(
 
     let schedule = null;
     if (possibleSchedule) {
-      schedule = tiktokStats.getPostedTime(videoToPost.link.split("/").pop());
+      const initDate = tiktokStats.getPostedTime(
+        videoToPost.link.split("/").pop()
+      );
+      schedule = new Date();
+      schedule.setHours(initDate.getHours(), initDate.getMinutes());
+
       // ✅ Si l'heure est déjà passée, programmer pour maintenant
       if (schedule <= new Date()) {
         schedule = null;
