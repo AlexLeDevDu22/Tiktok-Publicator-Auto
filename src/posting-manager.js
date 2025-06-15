@@ -2,7 +2,9 @@ const cron = require("node-cron");
 const utils = require("./utils.js");
 const tiktokStats = require("./tiktok-stats.js");
 const https = require("https");
+const http = require("http"); // Pour fetch si besoin
 const { URL } = require("url");
+const { DateTime } = require("luxon");
 
 /**
  * Get the count of postings for a given account today.
@@ -83,7 +85,7 @@ async function hubRepost(
   possibleSchedule = true,
   accountColor = "\x1b[47m",
   turnNum,
-  testMode = false
+  testMode = true //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 ) {
   // ✅ Utiliser une transaction pour assurer l'atomicité
   const connection = await db.getConnection();
@@ -112,26 +114,31 @@ async function hubRepost(
 
     const videoToPost = rows[0];
 
+    const now = DateTime.local().setZone("Europe/Paris"); // → 2025-06-16T00:00
     let schedule = null;
+
     if (possibleSchedule) {
       const initDate = tiktokStats.getPostedTime(
         videoToPost.link.split("/").pop()
       );
-      schedule = new Date();
-      schedule.setHours(initDate.getHours(), initDate.getMinutes());
 
-      // ✅ Si l'heure est déjà passée, programmer pour maintenant
-      if (schedule <= new Date()) {
+      const initHour = DateTime.fromJSDate(initDate).setZone("Europe/Paris");
+
+      schedule = now.set({ hour: initHour.hour, minute: initHour.minute });
+
+      if (schedule <= now) {
         schedule = null;
       }
     }
+
+    // Log en heure française pour bien suivre
     console.log(
       "\x1b[34m%s\x1b[0m",
       `Processing scheduling for ${
         accountColor + account.pseudo + " \x1b[34m\x1b[0m"
-      } at ${
-        schedule ? schedule.toLocaleString("fr-FR", { timeZone: "UTC" }) : "NOW"
-      } (${turnNum + 1}/${account.daily_tiktok_count})`
+      } at ${schedule ? schedule.toFormat("dd/MM/yyyy HH:mm") : "NOW"} (${
+        turnNum + 1
+      }/${account.daily_tiktok_count})`
     );
 
     // ✅ Vérifier qu'on n'a pas déjà publié cette vidéo pour ce compte
@@ -198,7 +205,8 @@ async function hubRepost(
       account,
       videoToPost,
       schedule,
-      testMode
+      testMode,
+      db // Ajoute db ici
     );
     if (uploadSuccess) {
       console.log(
@@ -218,7 +226,7 @@ async function hubRepost(
             videoToPost.id,
             account.id,
             videoToPost.initial_description,
-            schedule || new Date(),
+            schedule ? schedule.toFormat("yyyy-MM-dd HH:mm:ss") : new Date(),
             publicationStatus,
           ]
         );
@@ -254,7 +262,7 @@ async function hubRepost(
             videoToPost.id,
             account.id,
             videoToPost.initial_description,
-            schedule || new Date(),
+            schedule ? schedule.toFormat("yyyy-MM-dd HH:mm:ss") : new Date(),
             "failed",
           ]
         );
@@ -346,18 +354,103 @@ function makeRequest(url, options, data = null) {
 }
 
 /**
- * Uploads a video to Buffer using the specified account, video, and schedule.
- * @param {Account} account - The account to use for the upload.
- * @param {Video} videoToPost - The video to upload.
- * @param {Date} schedule - The date and time to schedule the upload for, or null to upload now.
- * @param {boolean} [testMode=false] - If true, the upload will not be performed, only the request will be made.
+ * Rafraîchit les cookies Zapier en cas de 401.
+ * @param {object} zapierAccount - L'objet zapierAccount (doit contenir email, password, account_id, id)
+ * @param {object} db - Connexion MySQL2/promise
+ * @returns {Promise<string>} - Les nouveaux cookies sous forme de string
  */
+async function refreshZapierCookies(zapierAccount, db) {
+  const loginBody = JSON.stringify({
+    account_id: zapierAccount.account_id,
+    email: zapierAccount.email,
+    password: zapierAccount.password,
+  });
+
+  const loginOptions = {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "accept-language": "en-US,en;q=0.9",
+      baggage:
+        "sentry-environment=production,sentry-release=52077a21f526ab9c79ef142b0650b01d01412e0f,sentry-public_key=44538d18b58d4a709fa09a409e48e6bc,sentry-trace_id=946e4f258ef04b08b2a3d9b61df6f699,sentry-transaction=%2Fapp%2Flogin,sentry-sampled=true,sentry-sample_rand=0.908971472501366,sentry-sample_rate=1",
+      "content-type": "application/json;charset=utf-8",
+      priority: "u=1, i",
+      "sec-ch-ua": '"Not.A/Brand";v="99", "Chromium";v="136"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Linux"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      "sentry-trace": "946e4f258ef04b08b2a3d9b61df6f699-8e1c7db7007ae1a1-1",
+      "x-csrftoken":
+        "UkuNxOgdXRhjLZuU55j1MdYzmmL8bVr6qRGXyADxia7wAJFnjX0iw67br9rgFaqp",
+      "x-datadog-origin": "rum",
+      "x-datadog-parent-id": "1196485182785788830",
+      "x-datadog-sampled": "1",
+      "x-datadog-sampling-priority": "1",
+      "x-datadog-trace-id": "2579412473779602913",
+      "x-requested-with": "XMLHttpRequest",
+      cookie:
+        'zapidentity=-727112666; ssohint=anonymous; visitor_id=2061296d-6228-477e-ad74-666a95300cde; builderSessionId=56f26ca975e746a8b196430911268072; session_id=a21bd84d-94ae-4612-a9d2-426e466b4035; csrftoken=UkuNxOgdXRhjLZuU55j1MdYzmmL8bVr6qRGXyADxia7wAJFnjX0iw67br9rgFaqp; OptanonConsentInSided=C0001; intercom-id-su0xp8g6=bb194c36-32e7-42fa-826b-f51064d4e94c; intercom-session-su0xp8g6=; intercom-device-id-su0xp8g6=f17f5385-6c1c-4038-a8a7-b9d0a4ce148b; fs_lua=1.1750020393024; fs_uid=#1XM#6006ad3b-08cd-4382-912a-ae54c5847438:b65b128a-bce5-4d6d-ae8c-6fb4d595a6b3:1750020393024::1#/1781556394; OptanonConsent=isGpcEnabled=0&datestamp=Sun+Jun+15+2025+22%3A46%3A39+GMT%2B0200+(Central+European+Summer+Time)&version=202401.1.0&browserGpcFlag=0&isIABGlobal=false&hosts=&consentId=0c5ae4a4-a21f-4ada-ac37-88edacc85a58&interactionCount=1&landingPath=NotLandingPage&groups=C0004%3A0%2CC0005%3A0%2CC0002%3A0%2CC0003%3A0%2CC0001%3A1&AwaitingReconsent=false; _dd_s=aid=550487fb-065b-47f6-b1fa-27a55d901952&rum=2&id=0412d4ee-d5d8-4deb-be83-81bf98f99825&created=1907787775&expire=1907787775; signonidentity=""',
+      Referer: "https://zapier.com/app/login",
+      "Referrer-Policy": "strict-origin-when-cross-origin",
+    },
+  };
+
+  // Utilise makeRequest pour POST login
+  const loginResp = await makeRequest(
+    "https://zapier.com/api/v3/login",
+    loginOptions,
+    loginBody
+  );
+
+  if (![200, 201].includes(loginResp.statusCode)) {
+    throw new Error("Impossible de rafraîchir les cookies Zapier");
+  }
+
+  // Récupère tous les set-cookie
+  const setCookieHeaders = loginResp.headers["set-cookie"];
+  if (!setCookieHeaders)
+    throw new Error("Pas de set-cookie dans la réponse Zapier");
+
+  // Fusionne tous les cookies reçus
+  let newCookies = setCookieHeaders.map((c) => c.split(";")[0]).join("; ");
+
+  // On garde aussi les cookies qui ne sont pas dans set-cookie mais étaient déjà là (ex: intercom-id, etc)
+  // On merge intelligemment (simple ici)
+  const oldCookies = zapierAccount.cookies.split(";").map((c) => c.trim());
+  const newCookiesArr = newCookies.split(";").map((c) => c.trim());
+  const cookieMap = {};
+  oldCookies.forEach((c) => {
+    const [k, v] = c.split("=");
+    cookieMap[k] = v;
+  });
+  newCookiesArr.forEach((c) => {
+    const [k, v] = c.split("=");
+    cookieMap[k] = v;
+  });
+  const mergedCookies = Object.entries(cookieMap)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+
+  // Update DB
+  await db.query("UPDATE zapier_accounts SET cookies = ? WHERE id = ?", [
+    mergedCookies,
+    zapierAccount.id,
+  ]);
+
+  return mergedCookies;
+}
+
+// Modifie uploadVideo pour gérer le 401 et retry
 async function uploadVideo(
   zapierAccount,
   account,
   videoToPost,
   schedule,
-  testMode = false
+  testMode = false,
+  db = null, // Ajoute db pour pouvoir update les cookies
+  retry = false // Pour éviter boucle infinie
 ) {
   // Première requête PATCH
   const patchData = JSON.stringify({
@@ -397,7 +490,10 @@ async function uploadVideo(
               "https://www.tikwm.com/video/media/play/" +
               videoToPost.link.split("/").reverse()[0] +
               ".mp4",
-            scheduled_at: schedule?.toISOString().slice(0, 16),
+            scheduled_at:
+              schedule && schedule > new Date()
+                ? schedule.toFormat("yyyy-MM-dd'T'HH:mm")
+                : null,
             attachment: "video",
           },
           meta: {
@@ -454,15 +550,6 @@ async function uploadVideo(
   };
 
   try {
-    // console.log({
-    //   url:
-    //     "https://zapier.com/api/gulliver/storage/v1/zaps/" +
-    //     zapierAccount.zap_id +
-    //     "?account_id=" +
-    //     zapierAccount.cookies.split("currentAccountId=")[1].split(";")[0],
-    //   patchOptions,
-    //   patchData,
-    // });
     const response = await makeRequest(
       "https://zapier.com/api/gulliver/storage/v1/zaps/" +
         zapierAccount.zap_id +
@@ -471,6 +558,29 @@ async function uploadVideo(
       patchOptions,
       patchData
     );
+    if (response.statusCode === 401 && !retry && db) {
+      console.warn(
+        "\x1b[33m[Zapier] Cookies expirés, rafraîchissement...\x1b[0m"
+      );
+      // Rafraîchir cookies
+      const newCookies = await refreshZapierCookies(zapierAccount, db);
+      zapierAccount.cookies = newCookies;
+      // Met à jour les headers pour la nouvelle requête
+      patchOptions.headers.Cookie = newCookies;
+      patchOptions.headers["X-CSRFToken"] = newCookies
+        .split("csrftoken=")[1]
+        .split(";")[0];
+      // Retry une seule fois
+      return await uploadVideo(
+        zapierAccount,
+        account,
+        videoToPost,
+        schedule,
+        testMode,
+        db,
+        true
+      );
+    }
     if (![200, 201].includes(response.statusCode)) {
       console.error(
         "Error patching zapier account",
@@ -514,17 +624,6 @@ async function uploadVideo(
       },
     };
     if (!testMode) {
-      // console.log("\n\n\n\n", {
-      //   url:
-      //     "https://zapier.com/api/gulliver/steptesting/v2/zaps/" +
-      //     zapierAccount.zap_id +
-      //     "/steps/" +
-      //     zapierAccount.GEN_ID +
-      //     "/output/test/run?account_id=" +
-      //     zapierAccount.cookies.split("currentAccountId=")[1].split(";")[0] +
-      //     "&origin=main",
-      //   postOptions,
-      // });
       const postResponse = await makeRequest(
         "https://zapier.com/api/gulliver/steptesting/v2/zaps/" +
           zapierAccount.zap_id +
@@ -556,9 +655,15 @@ async function uploadVideo(
  */
 function init(db) {
   schedulingTodayPosting(db);
-  cron.schedule("0 0 * * *", () => {
-    schedulingTodayPosting(db);
-  });
+  cron.schedule(
+    "0 0 * * *",
+    () => {
+      schedulingTodayPosting(db);
+    },
+    {
+      timezone: "Europe/Paris",
+    }
+  );
 }
 
 module.exports = { init, hubRepost };
