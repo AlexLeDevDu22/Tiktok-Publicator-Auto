@@ -85,7 +85,7 @@ async function hubRepost(
   possibleSchedule = true,
   accountColor = "\x1b[47m",
   turnNum,
-  testMode = true //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  testMode = false
 ) {
   // ✅ Utiliser une transaction pour assurer l'atomicité
   const connection = await db.getConnection();
@@ -114,18 +114,30 @@ async function hubRepost(
 
     const videoToPost = rows[0];
 
-    const now = DateTime.local().setZone("Europe/Paris"); // → 2025-06-16T00:00
+    const now = DateTime.local().setZone("Europe/Paris");
     let schedule = null;
 
     if (possibleSchedule) {
-      const initDate = tiktokStats.getPostedTime(
-        videoToPost.link.split("/").pop()
+      // Récupère les meilleures heures pour ce compte (déjà calculées dans schedulingTodayPosting)
+      // On suppose que bestHoursToPost a été passé en paramètre ou recalculé ici si besoin
+      const bestHours = await tiktokStats.bestHoursToPost(
+        account,
+        account.daily_tiktok_count
       );
+      // Sélectionne l'heure pour ce post
+      const scheduleHour =
+        bestHours[turnNum % bestHours.length] || [9, 14, 19][turnNum % 3];
+      // Ajoute quelques minutes aléatoires pour éviter les patterns trop fixes
+      const randomMinute = Math.floor(Math.random() * 60);
 
-      const initHour = DateTime.fromJSDate(initDate).setZone("Europe/Paris");
+      schedule = now.set({
+        hour: scheduleHour,
+        minute: randomMinute,
+        second: 0,
+        millisecond: 0,
+      });
 
-      schedule = now.set({ hour: initHour.hour, minute: initHour.minute });
-
+      // Si l'heure est déjà passée, ne schedule pas (ou adapte selon ta logique)
       if (schedule <= now) {
         schedule = null;
       }

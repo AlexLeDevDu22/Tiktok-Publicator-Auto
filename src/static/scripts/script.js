@@ -110,6 +110,7 @@ function setGlowScore() {
     comparisonPercentage.style.color = "green";
     comparisonSVG.setAttribute("fill", "green");
     comparisonPercentage.style.bottom = "0px";
+    comparisonSVG.style.transform = "scaleY(1)";
   } else if (glowScore < 0) {
     comparisonPercentage.style.color = "red";
     comparisonPercentage.style.top = "0px";

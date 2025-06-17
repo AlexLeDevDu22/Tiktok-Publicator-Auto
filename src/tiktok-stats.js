@@ -130,6 +130,47 @@ async function getTotalFollowers(db, accountId) {
   return (await response.json()).follower_num.value || 0;
 }
 
+async function bestHoursToPost(account, n) {
+  const response = await fetch(
+    'https://www.tiktok.com/aweme/v2/data/insight/?type_requests=[{"insigh_type":"viewer_active_history_hours","days":8,"end_days":1}]',
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers":
+          "Origin, X-Requested-With, Content-Type, Accept",
+        cookie: `sessionid=${account.sessionid}`,
+      },
+    }
+  );
+  const data = await response.json();
+  if (!data.viewer_active_history_hours) return [17, 12, 20]; // if no data, return default hours
+  const hours = data.viewer_active_history_hours[0].value; // heurs il y a 7 jours
+  if (hours.reduce((a, b) => a + b) < 480) return [17, 12, 20]; // if no enought views for stats
+
+  let bestTimes = [];
+
+  // Tri les heures par ordre décroissant
+  const sortedHours = hours.slice().sort((a, b) => b - a);
+
+  // Sélectionne les n premières heures
+  for (let i = 0; i < sortedHours.length; i++) {
+    const hour = sortedHours[i];
+    const index = hours.indexOf(hour);
+
+    // Vérifie si l'index est déjà présent dans la liste
+    if (!bestTimes.includes(index)) {
+      // Vérifie si l'index est séparé d'au moins 1 heure des indices précédents
+      if (!bestTimes.some((prevIndex) => Math.abs(prevIndex - index) < 2)) {
+        bestTimes.push(index);
+        // Si on a trouvé les n heures, on arrête
+        if (bestTimes.length === n) break;
+      }
+    }
+  }
+  return bestTimes;
+}
+
 async function init(db) {
   const accounts = await utils.getAccountsData(db, "*");
 
@@ -151,5 +192,6 @@ module.exports = {
   getAllDaysStats,
   getPostedTime,
   getTotalFollowers,
+  bestHoursToPost,
   init,
 };
