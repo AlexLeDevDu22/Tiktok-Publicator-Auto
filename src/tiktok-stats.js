@@ -109,6 +109,27 @@ function getPostedTime(videoId) {
   return localDate;
 }
 
+async function getTotalFollowers(db, accountId) {
+  const account = await utils.getAccountsData(db, accountId);
+  if (!account.sessionid || account.sessionid === "") return 0;
+  const response = await fetch(
+    `https://www.tiktok.com/aweme/v2/data/insight/?type_requests=[
+      {"insigh_type":"follower_num"}
+    ]`,
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers":
+          "Origin, X-Requested-With, Content-Type, Accept",
+        cookie: `sessionid=${account.sessionid}`,
+      },
+    }
+  );
+
+  return (await response.json()).follower_num.value || 0;
+}
+
 async function init(db) {
   const accounts = await utils.getAccountsData(db, "*");
 
@@ -129,5 +150,6 @@ module.exports = {
   SaveDaysStats,
   getAllDaysStats,
   getPostedTime,
+  getTotalFollowers,
   init,
 };

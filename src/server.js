@@ -65,11 +65,15 @@ app.get("/stats", async (req, res) => {
     formattedStats.pv.push(stat.pv);
     formattedStats.rewards.push(stat.rewards);
   });
+  formattedStats.totalFollowers = await tiktokStats.getTotalFollowers(
+    db,
+    accountId
+  );
   return res.status(200).json(formattedStats);
 });
 
 app.get("/accounts", async (req, res) => {
-  return res.status(200).json(await getAccountsData(db, "*"));
+  return res.status(200).json(await getAccountsData(db, "*", true));
 });
 
 // HTTP Server

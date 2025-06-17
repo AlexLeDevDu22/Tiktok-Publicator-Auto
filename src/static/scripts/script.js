@@ -127,7 +127,6 @@ async function initDisplayAccount() {
         "/stats?account=" + accounts[currentAccountIndex].id
       );
       accounts[currentAccountIndex].stats = await response.json();
-
       // convert rewards to euros
       response = await fetch("https://api.exchangerate-api.com/v4/latest/USD");
       const data = await response.json();
@@ -137,6 +136,11 @@ async function initDisplayAccount() {
         parseFloat((reward * data.rates.EUR).toFixed(2))
       );
     }
+    // show PP and name
+    document.getElementById("profil-picture").src =
+      "PP/" + accounts[currentAccountIndex].id + ".png";
+    document.getElementById("profil-name").textContent =
+      accounts[currentAccountIndex].pseudo;
 
     //show total rewards
     totalRewards.textContent = `${
@@ -200,11 +204,16 @@ function refreshDisplayStats() {
   ["views", "likes", "pv", "comments", "shares", "follows"].forEach((key) => {
     const realStat = [...accounts[currentAccountIndex].stats[key]];
     if (realStat.length > 0) {
-      realStat[realStat.length - 1] =
-        realStat[realStat.length - 1][realStat[realStat.length - 1].length - 1];
-      const num = realStat
-        .slice(-lastDaysChoice.value)
-        .reduce((a, b) => a + (b || 0), 0);
+      let num = 0;
+      if (key != "follows") {
+        realStat[realStat.length - 1] =
+          realStat[realStat.length - 1][
+            realStat[realStat.length - 1].length - 1
+          ];
+        num = realStat
+          .slice(-lastDaysChoice.value)
+          .reduce((a, b) => a + (b || 0), 0);
+      } else num = accounts[currentAccountIndex].stats.totalFollowers;
 
       const statContainer = document.querySelector(
         '.stat-block-container[name="' + key + '"]'
